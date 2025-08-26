@@ -1,10 +1,13 @@
 
 from data_management.data_integration import generate_1d_histogram_data, generate_2d_histogram_data
 
-"""
-A class to store the state of data at a specific point in time within the 
-session.
-"""
+"""Need to have this class store:
+
+    Wrangle performed
+    rows affected
+    regular table
+    error table
+    """
 class DataInstance:
     def __init__(self,wrangle_performed,rows_affected,regular_table,error_table):
         self.wrangle_performed = wrangle_performed

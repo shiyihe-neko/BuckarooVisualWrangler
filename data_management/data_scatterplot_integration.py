@@ -13,13 +13,16 @@ def generate_scatterplot_sample_data(x_column, y_column, min_id, max_id, error_s
     """Generate scatterplot data in the required JSON format"""
     # Get filtered data
     main_df, error_df = get_filtered_dataframes(min_id, max_id)
+    print("got the dfs")
     # Determine column types
     x_type = get_column_type_for_scatterplot(main_df, x_column)
     y_type = get_column_type_for_scatterplot(main_df, y_column)
+    print("got the types")
     # Sample data directly using the more efficient approach
     sampled_ids = sample_scatterplot_data(
         main_df, error_df, x_column, y_column, error_sample_size, total_sample_size
     )
+    print("got the sampled ids")
     # Build data entries
     data_entries = []
     for row_id in sampled_ids:
@@ -27,7 +30,7 @@ def generate_scatterplot_sample_data(x_column, y_column, min_id, max_id, error_s
             main_df, error_df, row_id, x_column, y_column, x_type, y_type
         )
         data_entries.append(entry)
-    print("generating scatterplot data...")
+    print("data_entries done")
     # Build scale information
     scale_x = get_scale_info_for_scatterplot(main_df, x_column, x_type)
     scale_y = get_scale_info_for_scatterplot(main_df, y_column, y_type)
@@ -107,8 +110,6 @@ def get_scale_info_for_scatterplot(dataframe, column_name, column_type):
     else:
         # For numeric, return the range
         non_null_values = dataframe[column_name].dropna()
-        non_null_values = pd.to_numeric(non_null_values, errors='coerce')
-
         if len(non_null_values) == 0:
             return {"numeric": [0, 1], "categorical": []}
 
