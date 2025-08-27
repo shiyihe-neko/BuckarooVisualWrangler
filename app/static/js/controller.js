@@ -6,8 +6,6 @@ class ScatterplotController {
       this.xCol = null;
       this.yCol = null;
       this.viewGroupsButton = false;                                           // True when the user has selected an attribute to group by and the legend will update to show group colors instead of error colors
-      this.detectors = null;
-      this.wranglers = null;
 
       this.setupEventListeners();
     }
@@ -18,9 +16,7 @@ class ScatterplotController {
      * @param {*} wranglers
      * @param errorData
      */
-    async init(detectors, wranglers,errorData) {
-        this.detectors = detectors;
-        this.wranglers = wranglers;
+    async init( errorData) {
 
         // await this.model.runDetectors(detectors);
         this.model.columnErrorMap = errorData;
@@ -252,8 +248,6 @@ class ScatterplotController {
                 targetTab.style.display = "block";
 
                 document.querySelector("input[name='options'][value='allData']").checked = true;
-                document.getElementById("impute-average-x").textContent = "Impute selected data with average for X";
-                document.getElementById("impute-average-y").textContent = "Impute selected data with average for Y";
 
                 this.updateSelectedAttributes(this.selectedAttributes); // renders
 
@@ -326,193 +320,6 @@ async function attachButtonEventListeners(controller){
 
         return
 
-        document.getElementById("preview-remove").style.display = "none";
-        document.getElementById("preview-impute-average-x").style.display = "none";
-        document.getElementById("preview-impute-average-y").style.display = "none";
-        document.getElementById("preview-user-function").style.display = "none";
-
-        //get the selected points that the user clicked on the matrix, can be a single point or many
-        const selectedPoints = controller.model.getSelectedPoints();
-        const loc = window.location.href;
-        const dir = loc.substring(0, loc.lastIndexOf('/'));
-        const module = await import(dir+"/static/wranglers/removeData.js");
-        const condition = module.default(selectedPoints);
-        const errorMap = controller.model.getColumnErrors();
-        //initializes a map to keep track of any errors that are found in the selected points
-        const selectedPointsErrors = {};
-        //extracts just the id from the selected points, so they look like this: {1:1} - yeah doesn't make sense
-        const selectedIDs = selectedPoints.map(d => d.ID);
-        //loops through each of the points in the selectedIds map, checks to see
-        selectedIDs.forEach(id => {
-            const errors = [];
-
-            // Check to see if the selected point is in the xCol
-            if (errorMap[controller.xCol] && errorMap[controller.xCol][id]) {
-            errors.push(...errorMap[controller.xCol][id]);
-            }
-
-            // Checks to see if the selected point is in the yCol
-            if (errorMap[controller.yCol] && errorMap[controller.yCol][id]) {
-            errors.push(...errorMap[controller.yCol][id]);
-            }
-            // the selected point should be added to the selectedPointsErrors dictionary based on the id as a key, and the error type as the value
-            if (errors.length > 0) {
-                selectedPointsErrors[id] = errors;
-            }
-        });
-
-        controller.model.filterData(condition, {
-            ids: selectedPoints.map(p => p.ID),
-            xCol: controller.xCol,
-            xVals: selectedPoints.map(p => p[controller.xCol]),
-            yCol: controller.yCol,
-            yVals: selectedPoints.map(p => p[controller.yCol]),
-            imputedColumn: false,
-            value: false,
-            idErrors: selectedPointsErrors
-          });
-
-        await controller.model.runDetectors(controller.detectors);
-        controller.view.updateDirtyRowsTable(controller.model.getFullFilteredData());
-        controller.view.updateColumnErrorIndicators(controller.model.getFullFilteredData(), controller);
-        const selectionEnabled = true;
-        controller.view.plotMatrix(controller.model.getData(), controller.model.getGroupByAttribute());
-    });
-
-    d3.select("#impute-average-x").on("click", async () => {
-        console.log("current selection: ", selectionControlPanel.currentSelection)
-
-        console.log("current table: ", localStorage.getItem("table"))
-
-        try{
-            const payload = {
-            currentSelection: selectionControlPanel.currentSelection,
-            cols:  [selectionControlPanel.viewParameters[4], selectionControlPanel.viewParameters[5]],
-            table:           localStorage.getItem("table"),
-            };
-
-            const response = await fetch("/api/wrangle/impute", {
-            method : "POST",
-            headers: { "Content-Type": "application/json" },
-            body   : JSON.stringify(payload),
-            });
-
-            const data = await response.json();
-            console.log(data['new_table_name'])
-            localStorage.setItem("table", data['new_table_name'])
-            window.location.reload()
-        }
-        catch (error){
-            console.error(error.message)
-        }
-
-
-
-        return
-
-        document.getElementById("preview-remove").style.display = "none";
-        document.getElementById("preview-impute-average-x").style.display = "none";
-        document.getElementById("preview-impute-average-y").style.display = "none";
-        document.getElementById("preview-user-function").style.display = "none";
-
-        const selectedPoints = controller.model.getSelectedPoints();
-        const loc = window.location.href;
-        const dir = loc.substring(0, loc.lastIndexOf('/'));
-        const module = await import(dir+"/static/wranglers/imputeAverage.js");
-        const imputedValue = computeAverage(controller.xCol, controller.model.getData())
-        const transformation = module.default(controller.xCol, controller.model.getData(), selectedPoints);
-        const errorMap = controller.model.getColumnErrors();
-
-        const selectedPointsErrors = {};
-        const selectedIDs = selectedPoints.map(d => d.ID);
-
-        selectedIDs.forEach(id => {
-            const errors = [];
-
-            // Check xCol
-            if (errorMap[controller.xCol] && errorMap[controller.xCol][id]) {
-            errors.push(...errorMap[controller.xCol][id]);
-            }
-
-            // Check yCol
-            if (errorMap[controller.yCol] && errorMap[controller.yCol][id]) {
-            errors.push(...errorMap[controller.yCol][id]);
-            }
-
-            if (errors.length > 0) {
-                selectedPointsErrors[id] = errors;
-            }
-        });
-
-        controller.model.transformData(controller.xCol, transformation, {
-            ids: selectedPoints.map(p => p.ID),
-            xCol: controller.xCol,
-            xVals: selectedPoints.map(p => p[controller.xCol]),
-            yCol: controller.yCol,
-            yVals: selectedPoints.map(p => p[controller.yCol]),
-            imputedColumn: controller.xCol,
-            value: imputedValue,
-            idErrors: selectedPointsErrors
-          });
-        // controller.view.setSelectedPoints([]);
-        await controller.model.runDetectors(controller.detectors);
-        controller.view.updateDirtyRowsTable(controller.model.getFullFilteredData());
-        controller.view.updateColumnErrorIndicators(controller.model.getFullFilteredData(), controller);
-        const selectionEnabled = true;
-        controller.view.plotMatrix(controller.model.getData(), controller.model.getGroupByAttribute() );
-    });
-
-    d3.select("#impute-average-y").on("click", async () => {
-        document.getElementById("preview-remove").style.display = "none";
-        document.getElementById("preview-impute-average-x").style.display = "none";
-        document.getElementById("preview-impute-average-y").style.display = "none";
-        document.getElementById("preview-user-function").style.display = "none";
-
-        const selectedPoints = controller.model.getSelectedPoints();
-        const loc = window.location.href;
-        const dir = loc.substring(0, loc.lastIndexOf('/'));
-        const module = await import(dir+"/static/wranglers/imputeAverage.js");
-        const imputedValue = computeAverage(controller.yCol, controller.model.getData())
-        const transformation = module.default(controller.yCol, controller.model.getData(), selectedPoints);
-        const errorMap = controller.model.getColumnErrors();
-
-        const selectedPointsErrors = {};
-        const selectedIDs = selectedPoints.map(d => d.ID);
-
-        selectedIDs.forEach(id => {
-            const errors = [];
-
-            // Check xCol
-            if (errorMap[controller.xCol] && errorMap[controller.xCol][id]) {
-            errors.push(...errorMap[controller.xCol][id]);
-            }
-
-            // Check yCol
-            if (errorMap[controller.yCol] && errorMap[controller.yCol][id]) {
-            errors.push(...errorMap[controller.yCol][id]);
-            }
-
-            if (errors.length > 0) {
-                selectedPointsErrors[id] = errors;
-            }
-        });
-
-        controller.model.transformData(controller.yCol, transformation, {
-            ids: selectedPoints.map(p => p.ID),
-            xCol: controller.xCol,
-            xVals: selectedPoints.map(p => p[controller.xCol]),
-            yCol: controller.yCol,
-            yVals: selectedPoints.map(p => p[controller.yCol]),
-            imputedColumn: controller.yCol,
-            value: imputedValue,
-            idErrors: selectedPointsErrors
-          });
-        // controller.view.setSelectedPoints([]);
-        await controller.model.runDetectors(controller.detectors);
-        controller.view.updateDirtyRowsTable(controller.model.getFullFilteredData());
-        controller.view.updateColumnErrorIndicators(controller.model.getFullFilteredData(), controller);
-        const selectionEnabled = true;
-        controller.view.plotMatrix(controller.model.getData(), controller.model.getGroupByAttribute() );
     });
 
 }     

@@ -141,9 +141,9 @@ def get_2d_histogram():
     min_id         = int(request.args.get("min_id", 0))
     max_id         = int(request.args.get("max_id", 200))
     number_of_bins = int(request.args.get("bins", 10))
-
-    table_name= request.args.get("table", None)
-    # table_name = request.args.get("selected_sample", None).split('/')[-1].replace('.csv', '')
+    # table_name= request.args.get("table", None)
+    # table_name = "stackoverflow_db_uncleaned"
+    table_name = request.args.get("table_name", None).split('/')[-1].replace('.csv', '')
 
 
     try:

@@ -4,6 +4,9 @@
 from typing import Dict, Any, List
 from sqlalchemy import text, Engine
 from app import engine      # your existing SQLAlchemy engine
+from sqlalchemy import text
+
+
 
 # _NUMERIC_TYPES = {
 #     "smallint", "integer", "bigint",
@@ -74,7 +77,7 @@ def _numeric_scale(lo: float, hi: float, bins: int, axis: str) -> List[Dict[str,
     return [{k0: lo + i * step, k1: lo + (i + 1) * step} for i in range(bins)]
 
 
-def generate_2d_histogram_data(
+def generate_2d_histogram_data (
     x_column: str,
     y_column: str,
     bins: int,
@@ -99,6 +102,8 @@ def generate_2d_histogram_data(
     # ────────── helpers for id-range slicing ──────────
     range_where  = '' if whole_table else 'WHERE "index" BETWEEN :lo AND :hi'
     range_params = {} if whole_table else {"lo": min_id, "hi": max_id}
+
+    print( x_column, y_column, bins, min_id, max_id, table_name)
 
     with engine.connect() as conn:
         # 1 ‧ column types
@@ -296,7 +301,8 @@ def generate_2d_histogram_data(
 
     return {"histograms": histograms, "scaleX": scaleX, "scaleY": scaleY}
 
-from sqlalchemy import text
+
+
 
 def copy_without_flagged_rows(current_selection: dict,
                               cols: list[str],

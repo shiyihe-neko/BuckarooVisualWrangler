@@ -115,13 +115,7 @@ function initWranglersDetectors(controller,errorData){
         try {
             /* These are not getting used currently, they are from the old view-only branch, and haven't been deleted
             * yet (also the wranglers) */
-            const detectorResponse = await fetch('/static/detectors/detectors.json');
-            const detectors = await detectorResponse.json();
-
-            const wranglerResponse = await fetch('/static/wranglers/wranglers.json');
-            const wranglers = await wranglerResponse.json();
-
-            await controller.init(detectors, wranglers,errorData);
+            await controller.init(errorData);
                 } catch (err) {
                     console.error("Failed to init controller:", err);
                 }

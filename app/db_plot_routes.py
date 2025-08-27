@@ -34,6 +34,8 @@ def get_1d_histogram_db():
     except Exception as e:
         return {"Success": False, "Error": str(e)}
 
+
+
 @app.get("/api/plots/2-d-histogram-data-db")
 def get_2d_histogram_db():
     """
