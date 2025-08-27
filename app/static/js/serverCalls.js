@@ -1,3 +1,7 @@
+
+
+
+
 /**
  * Sends the user uploaded file to the endpoint in the server to add it to the DB
  * @param {} fileToSend the file the user is sending
@@ -151,11 +155,12 @@ export async function queryHistogram2dDB(columnX,columnY,tableName,minId,maxID,b
  * @param binCount
  * @returns {Promise<any>}
  */
-async function queryHistogram2d(xColumn,yColumn,minId,maxId,binCount) {
+async function queryHistogram2d(xColumn,yColumn,tableName,minId,maxId,binCount) {
     console.log("2d histogram fetch");
     const params = new URLSearchParams({
         x_column:xColumn,
         y_column:yColumn,
+        table_name:tableName,
         min_id:minId,
         max_id:maxId,
         bins:binCount});
@@ -206,6 +211,22 @@ export async function querySample2d(xColumn, yColumn, minId, maxId, errorSamples
  * @returns {Promise<any>}
  */
 export async function queryAttributeSummaries(minId, maxId) {
+    const params = new URLSearchParams({
+        min_id:minId,
+        max_id:maxId,});
+
+    const url = `/api/plots/summaries?${params}`
+    try{
+        const response = await fetch(url, {method: "GET"});
+        return await response.json();
+    }
+    catch (error){
+        console.error(error.message)
+    }
+}
+
+
+export async function wrangleRemove(xCol,minId, maxId) {
     const params = new URLSearchParams({
         min_id:minId,
         max_id:maxId,});

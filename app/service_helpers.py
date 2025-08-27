@@ -207,6 +207,20 @@ def group_by_attribute(df, column_a, group_by):
     ret = df.pivot_table("ID", index=column_a, columns=group_by, aggfunc="count")
     return ret
 
+def get_2d_bins(column_a,column_b, range,bin_count):
+    column_a_categorical = is_categorical(column_a)
+    column_b_categorical = is_categorical(column_b)
+    column_a_bins = column_a
+    column_b_bins = column_b
+    if not column_a_categorical:
+        column_a_bins = create_bins_for_a_numeric_column(column_a,bin_count)
+    if not column_b_categorical:
+        column_b_bins = create_bins_for_a_numeric_column(column_b,bin_count )
+    print("before crosstab")
+    return pd.crosstab(column_a_bins, column_b_bins,dropna=True)
+
+    #make the number of bins for numeric be an option
+
 def slice_data_by_min_max_ranges(min_val,max_val,df,error_df):
     """
     Slices the dataframe and error dataframe by the min and max values provided, this is used

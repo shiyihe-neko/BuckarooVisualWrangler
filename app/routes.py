@@ -5,14 +5,14 @@
 import numpy as np
 import pandas as pd
 from flask import request, render_template
-
+import time
 from app import app
 from app import connection, engine
 from app.service_helpers import clean_table_name, get_whole_table_query, run_detectors, create_error_dict, \
     init_session_data_state, fetch_detected_and_undetected_current_dataset_from_db
 from app import data_state_manager
 from app.set_id_column import set_id_column
-
+import json
 
 @app.post("/api/upload")
 def upload_csv():
@@ -28,14 +28,18 @@ def upload_csv():
 
     # run the detectors on the uploaded file for the starting data state
     table_with_id_added = set_id_column(dataframe)
+    start_time = time.time()
     detected_data = run_detectors(dataframe)
+    time_to_detect = time.time() - start_time
+
     cleaned_table_name = clean_table_name(csv_file.filename)
+    json.dump({'db': cleaned_table_name, "clean_time": time_to_detect, "dataframe_shape": list(detected_data.shape)}, open(f"report/{cleaned_table_name}.json", "w"))
 
     try:
         #insert the undetected dataframe
         rows_inserted = table_with_id_added.to_sql(cleaned_table_name, engine, if_exists='replace')
         detected_rows_inserted = detected_data.to_sql("errors"+cleaned_table_name, engine, if_exists='replace')
-        return{"success": True, "rows for undetected data": rows_inserted, "rows_for_detected": detected_rows_inserted}
+        return{"success": True, "rows for undetected data": rows_inserted, "rows_for_detected": detected_rows_inserted, "clean_table_name": cleaned_table_name}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -48,13 +52,15 @@ def get_sample():
     filename = request.args.get("filename")
     data_size = request.args.get("datasize")
     cleaned_table_name = clean_table_name(filename)
+
     if not filename:
         return {"success": False, "error": "Filename required"}
     QUERY = get_whole_table_query(cleaned_table_name,False) + " LIMIT "+ data_size
-    print("datasize", data_size)
     try:
         fetch_detected_and_undetected_current_dataset_from_db(cleaned_table_name,engine)
+        # sample_dataframe = pd.read_sql_query(QUERY, engine).to_dict(orient="records")
         sample_dataframe_as_dictionary = pd.read_sql_query(QUERY, engine).replace(np.nan, None).to_dict(orient="records")
+        # print("First row:", sample_dataframe_as_dictionary[0])  # See what keys exist
         return sample_dataframe_as_dictionary
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -63,7 +69,7 @@ def get_sample():
 @app.get("/api/get-errors")
 def get_errors():
     """
-    Constructs and executes a postgresql query to get the error table corresponding to the current file from the database
+    Constructs a postgresql query to get the error table corresponding to the current file from the database
     :return: a dictionary of the error table
     """
     filename = request.args.get("filename")
@@ -82,16 +88,8 @@ def get_errors():
 
 @app.get("/")
 def home():
-    """ 
-    Renders the home page of the application
-    :return: the rendered index.html template
-    """
     return render_template('index.html')
 
 @app.get('/data_cleaning_vis_tool')
 def data_cleaning_vis_tool():
-    """
-    Renders the data cleaning visualization tool page
-    :return: the rendered data_cleaning_vis_tool.html template
-    """
     return render_template('data_cleaning_vis_tool.html')
