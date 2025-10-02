@@ -3,29 +3,12 @@ import {queryHistogram1d, queryHistogram1dDB} from "../js/serverCalls.js";
 
 export async function draw(model, view, canvas, givenData, xCol,previewFlag) {
 
-    console.log("Drawing bar chart for column:", xCol);
-
-    // let min_id_to_select = 1
-    // let max_id_to_select = 400
-    let binsToCreate = 10
-    // let histData = query_histogram1d(givenData.select(["ID", xCol]).objects(), model.getColumnErrors(), xCol);
-    // console.log("histData", histData);
-    let histData;
     try {
-        if(model.getUsingDb()){
-            let response = await queryHistogram1dDB(xCol, model.originalFilename,
-                model.getSampleIDRangeMin(),model.getSampleIDRangeMax(), binsToCreate)
-            histData = response ["binned_data"]
-        }
-        else {
-            let response = await queryHistogram1d(xCol, model.getSampleIDRangeMin(), model.getSampleIDRangeMax(), binsToCreate)
-            histData = response ["binned_data"]
-        }
-
-        console.log("1d histData from the server", histData)
+        let binsToCreate = 10
+        let response = await queryHistogram1d(xCol, model.originalFilename, model.getSampleIDRangeMin(), model.getSampleIDRangeMax(), binsToCreate)
+        let histData = response ["histogram"]
 
         let backgroundBox = createBackgroundBox(canvas, view.plotSize, view.plotSize);
-
 
         let numHistDataX = histData.scaleX.numeric;
         let catHistDataX = histData.scaleX.categorical;
@@ -36,9 +19,6 @@ export async function draw(model, view, canvas, givenData, xCol,previewFlag) {
             .domain([0, d3.max(histData.histograms, d => d.count.items)]).nice()
             .range([view.plotSize, 0]);
 
-
-        // view.errorColors['none'] = "steelblue";
-        // const colorScale = d3.scaleOrdinal().domain(Object.keys(view.errorColors)).range(Object.values(view.errorColors));
         const colorScale = view.errorColors
 
         let myData = []

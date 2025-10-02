@@ -80,7 +80,8 @@ def _numeric_scale(lo: float, hi: float, bins: int, axis: str) -> List[Dict[str,
 def generate_2d_histogram_data (
     x_column: str,
     y_column: str,
-    bins: int,
+    bins_x: int,
+    bins_y: int,
     min_id: int,
     max_id: int,
     table_name: str,
@@ -103,7 +104,7 @@ def generate_2d_histogram_data (
     range_where  = '' if whole_table else 'WHERE "index" BETWEEN :lo AND :hi'
     range_params = {} if whole_table else {"lo": min_id, "hi": max_id}
 
-    print( x_column, y_column, bins, min_id, max_id, table_name)
+    print( x_column, y_column, bins_x, bins_y, min_id, max_id, table_name)
 
     with engine.connect() as conn:
         # 1 ‧ column types
@@ -176,7 +177,7 @@ def generate_2d_histogram_data (
 
         # 5 ‧ full x / y bin sets (include sentinel for NULL)
         if x_is_num:
-            x_vals_cte = "SELECT generate_series(:null_num_bin, :bins - 1) AS x_bin"
+            x_vals_cte = "SELECT generate_series(:null_num_bin, :bins_x - 1) AS x_bin"
         else:
             x_vals_cte = f"""
               SELECT DISTINCT COALESCE("{x_column}"::text, '{NULL_CAT_BIN}') AS x_bin
@@ -184,7 +185,7 @@ def generate_2d_histogram_data (
               {range_where}
             """
         if y_is_num:
-            y_vals_cte = "SELECT generate_series(:null_num_bin, :bins - 1) AS y_bin"
+            y_vals_cte = "SELECT generate_series(:null_num_bin, :bins_y - 1) AS y_bin"
         else:
             y_vals_cte = f"""
               SELECT DISTINCT COALESCE("{y_column}"::text, '{NULL_CAT_BIN}') AS y_bin
@@ -194,11 +195,11 @@ def generate_2d_histogram_data (
 
         # 6 ‧ raw→bin mapping (coalesce NULL→sentinel)
         x_sel = (
-            f"COALESCE(width_bucket(\"{x_column}\", :xmin, :xmax, :bins) - 1, :null_num_bin)"
+            f"COALESCE(width_bucket(\"{x_column}\", :xmin, :xmax, :bins_x) - 1, :null_num_bin)"
             if x_is_num else f"COALESCE(\"{x_column}\"::text, '{NULL_CAT_BIN}')"
         )
         y_sel = (
-            f"COALESCE(width_bucket(\"{y_column}\", :ymin, :ymax, :bins) - 1, :null_num_bin)"
+            f"COALESCE(width_bucket(\"{y_column}\", :ymin, :ymax, :bins_y) - 1, :null_num_bin)"
             if y_is_num else f"COALESCE(\"{y_column}\"::text, '{NULL_CAT_BIN}')"
         )
 
@@ -246,7 +247,8 @@ def generate_2d_histogram_data (
 
         # 8 ‧ parameters
         params = {
-            "bins":         bins,
+            "bins_x":         bins_x,
+            "bins_y":         bins_y,
             "xmin":         xmin if xmin is not None else 0,
             "xmax":         xmax if xmax is not None else 1,
             "ymin":         ymin if ymin is not None else 0,
@@ -268,14 +270,14 @@ def generate_2d_histogram_data (
 
         if x_is_num:
             scaleX["numeric"] = _numeric_scale(float(params["xmin"]),
-                                               float(params["xmax"]), bins, "x")
+                                               float(params["xmax"]), bins_x, "x")
         else:
             scaleX["categorical"] = [
                 r[0] for r in conn.execute(text(x_vals_cte), params)
             ]
         if y_is_num:
             scaleY["numeric"] = _numeric_scale(float(params["ymin"]),
-                                               float(params["ymax"]), bins, "y")
+                                               float(params["ymax"]), bins_y, "y")
         else:
             scaleY["categorical"] = [
                 r[0] for r in conn.execute(text(y_vals_cte), params)
