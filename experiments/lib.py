@@ -29,7 +29,8 @@ def calculate_2D_histogram_postgres(x_column_name, y_column_name, table_name, ma
     binned_data = query.generate_2d_histogram_data(
         x_column=x_column_name,
         y_column=y_column_name,
-        bins=number_of_bins,
+        bins_x=number_of_bins,
+        bins_y=number_of_bins,
         min_id=0,
         max_id=max_row_count,
         table_name=table_name,

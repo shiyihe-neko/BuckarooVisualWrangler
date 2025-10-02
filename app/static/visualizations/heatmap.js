@@ -29,16 +29,10 @@ export async function draw(model, view, canvas, givenData, xCol, yCol) {
     // let maxId = 400
     let binsToCreate = 10
     try {
-        if(model.getUsingDb()){
-            let response = await queryHistogram2dDB(xCol,yCol,model.originalFilename, model.getSampleIDRangeMin(),model.getSampleIDRangeMax(),binsToCreate)
-            console.log("response from the server (db)", response)
-            histData = response["binned_data"]
-        }
-        else{
-            let response = await queryHistogram2d(xCol, yCol,model.originalFilename, model.getSampleIDRangeMin(), model.getSampleIDRangeMax(), binsToCreate)
-            console.log("response from the server (non-db)", response)
-            histData = response["binned_data"]
-        }
+
+        let response = await queryHistogram2d(xCol, yCol,model.originalFilename, model.getSampleIDRangeMin(), model.getSampleIDRangeMax(), binsToCreate)
+        console.log("response from the server (non-db)", response)
+        histData = response["histogram"]
 
     console.log("2d histData from the server", histData)
 

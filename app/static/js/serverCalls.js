@@ -77,14 +77,15 @@ async function getErrorData(filename,dataSize) {
  * Get the data for the 1d histogram in the view - pandas version
  * @returns {Promise<void>}
  */
-async function queryHistogram1d(columnName,minId,maxId,binCount) {
+async function queryHistogram1d(columnName,tableName,minId,maxId,binCount) {
     console.log("1d histogram fetch");
     const params = new URLSearchParams({
         column:columnName,
+        tablename:tableName,
         min_id:minId,
         max_id:maxId,
         bins:binCount});
-    const url = `/api/plots/1-d-histogram-data?${params}`
+    const url = `/api/plots/1-d-histogram?${params}`
     try{
         const response = await fetch(url, {method: "GET"});
         return await response.json();
@@ -94,27 +95,7 @@ async function queryHistogram1d(columnName,minId,maxId,binCount) {
     }
 }
 
-/**
- * Get the data for the 1d histogram in the view from the DB
- * @returns {Promise<void>}
- */
-export async function queryHistogram1dDB(columnName,tableName,minId,maxID,bins) {
-    console.log("1d histogram fetch");
-    const params = new URLSearchParams({
-        column:columnName,
-        tablename:tableName,
-        min_id: minId,
-        max_id: maxID,
-        bins: bins});
-    const url = `/api/plots/1-d-histogram-data-db?${params}`
-    try{
-        const response = await fetch(url, {method: "GET"});
-        return await response.json();
-    }
-    catch (error){
-        console.error(error.message)
-    }
-}
+
 
 /**
  * Get the data for the 2d histogram in the view from the DB
@@ -126,7 +107,7 @@ export async function queryHistogram1dDB(columnName,tableName,minId,maxID,bins) 
  * @param bins
  * @returns {Promise<any>}
  */
-export async function queryHistogram2dDB(columnX,columnY,tableName,minId,maxID,bins) {
+export async function queryHistogram2d(columnX,columnY,tableName,minId,maxID,bins) {
     console.log("1d histogram fetch");
     const params = new URLSearchParams({
         column_x:columnX,
@@ -136,34 +117,6 @@ export async function queryHistogram2dDB(columnX,columnY,tableName,minId,maxID,b
         max_id: maxID,
         x_bins: bins,
         y_bins: bins});
-    const url = `/api/plots/1-d-histogram-data-db?${params}`
-    try{
-        const response = await fetch(url, {method: "GET"});
-        return await response.json();
-    }
-    catch (error){
-        console.error(error.message)
-    }
-}
-
-/**
- * Get the data for the 2d histogram in the view
- * @param xColumn
- * @param yColumn
- * @param inId
- * @param maxId
- * @param binCount
- * @returns {Promise<any>}
- */
-async function queryHistogram2d(xColumn,yColumn,tableName,minId,maxId,binCount) {
-    console.log("2d histogram fetch");
-    const params = new URLSearchParams({
-        x_column:xColumn,
-        y_column:yColumn,
-        table_name:tableName,
-        min_id:minId,
-        max_id:maxId,
-        bins:binCount});
     const url = `/api/plots/2-d-histogram-data?${params}`
     try{
         const response = await fetch(url, {method: "GET"});
@@ -173,6 +126,7 @@ async function queryHistogram2d(xColumn,yColumn,tableName,minId,maxId,binCount) 
         console.error(error.message)
     }
 }
+
 
 /**
  * Get the scatterplot data from the pandas for the view
