@@ -87,6 +87,10 @@ data_state_manager = DataState()
 #engine to use pandas with the db
 engine = create_engine(f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{db_name}")
 
+# Initialize PostgreSQL stored procedures for histogram generation with errors
+from app.db_functions import initialize_database_functions
+initialize_database_functions(engine)
+
 from app import routes
 from app import wrangler_routes
 from app import plot_routes

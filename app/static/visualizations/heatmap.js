@@ -1,4 +1,4 @@
-import {queryHistogram2d, queryHistogram2dDB} from "../js/serverCalls.js";
+import {queryHistogram2d} from "../js/serverCalls.js";
 
 
 /**

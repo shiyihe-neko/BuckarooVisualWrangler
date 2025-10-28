@@ -1,19 +1,40 @@
-import {queryHistogram1d, queryHistogram1dDB} from "../js/serverCalls.js";
+import {queryHistogram1d} from "../js/serverCalls.js";
 
 
-export async function draw(model, view, canvas, givenData, xCol,previewFlag) {
+export async function draw(model, view, canvas, givenData, xCol, previewFlag) {
 
     try {
         let binsToCreate = 10
         let response = await queryHistogram1d(xCol, model.originalFilename, model.getSampleIDRangeMin(), model.getSampleIDRangeMax(), binsToCreate)
-        let histData = response ["histogram"]
+
+        console.log("[BARCHART] Response:", response);
+
+        if (!response || !response.Success) {
+            console.error("[BARCHART] API call failed:", response);
+            throw new Error(`Histogram API failed: ${response?.Error || 'Unknown error'}`);
+        }
+
+        let histData = response["histogram"];
+
+        if (!histData) {
+            console.error("[BARCHART] No histogram data in response:", response);
+            throw new Error("No histogram data returned from server");
+        }
+
+        console.log("[BARCHART] Histogram data:", histData);
 
         let backgroundBox = createBackgroundBox(canvas, view.plotSize, view.plotSize);
 
-        let numHistDataX = histData.scaleX.numeric;
-        let catHistDataX = histData.scaleX.categorical;
+        let numHistDataX = histData.scaleX.numeric || [];
+        let catHistDataX = histData.scaleX.categorical || [];
 
-        const xScale = createHybridScales(view.plotSize, numHistDataX, catHistDataX, numHistDataX.length === 0 ? null : [d3.min(numHistDataX, (d) => d.x0), d3.max(numHistDataX, (d) => d.x1)], catHistDataX.length === 0 ? null : catHistDataX.map(d => d));
+        const xScale = createHybridScales(
+            view.plotSize,
+            numHistDataX,
+            catHistDataX,
+            (numHistDataX.length === 0 || !numHistDataX[0]) ? null : [d3.min(numHistDataX, (d) => d.x0), d3.max(numHistDataX, (d) => d.x1)],
+            catHistDataX.length === 0 ? null : catHistDataX.map(d => d)
+        );
 
         const yScale = d3.scaleLinear()
             .domain([0, d3.max(histData.histograms, d => d.count.items)]).nice()
