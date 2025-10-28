@@ -117,7 +117,7 @@ async function queryHistogram2d(columnX,columnY,tableName,minId,maxID,bins) {
         max_id: maxID,
         x_bins: bins,
         y_bins: bins});
-    const url = `/api/plots/2-d-histogram-data?${params}`
+    const url = `/api/plots/2-d-histogram?${params}`
     try{
         const response = await fetch(url, {method: "GET"});
         return await response.json();

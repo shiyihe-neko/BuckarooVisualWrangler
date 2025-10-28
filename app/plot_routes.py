@@ -87,12 +87,12 @@ def get_2d_histogram():
                 )
 
         else:
-            query = f"SELECT generate_two_d_histogram_with_errors('{table}', 'errors{table}', '{column_x}','{column_y}', {x_bins},{y_bins}, {min_id}, {max_id});"
-            binned_data = pd.read_sql_query(query, engine).to_dict()
+            query_str = f"SELECT generate_two_d_histogram_with_errors('{table}', 'errors{table}', '{column_x}','{column_y}', {x_bins},{y_bins}, {min_id}, {max_id});"
+            binned_data = pd.read_sql_query(query_str, engine).to_dict()
             histogram = binned_data["generate_two_d_histogram_with_errors"][0]
 
         return {"Success": True, "histogram": histogram}
-        
+
     except Exception as e:
         return {"Success": False, "Error": str(e)}
 

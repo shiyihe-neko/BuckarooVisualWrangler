@@ -31,22 +31,35 @@ export async function draw(model, view, canvas, givenData, xCol, yCol) {
     try {
 
         let response = await queryHistogram2d(xCol, yCol,model.originalFilename, model.getSampleIDRangeMin(), model.getSampleIDRangeMax(), binsToCreate)
-        console.log("response from the server (non-db)", response)
-        histData = response["histogram"]
 
-    console.log("2d histData from the server", histData)
+        console.log("[HEATMAP] Response:", response);
 
-    let backgroundBox = createBackgroundBox(canvas, view.plotSize, view.plotSize);
+        if (!response || !response.Success) {
+            console.error("[HEATMAP] API call failed:", response);
+            throw new Error(`2D Histogram API failed: ${response?.Error || 'Unknown error'}`);
+        }
 
-    let numHistDataX = histData.scaleX.numeric;
-    const numDomainX = numHistDataX.length === 0 ? null : [d3.min(numHistDataX, (d) => d.x0), d3.max(numHistDataX, (d) => d.x1)];
-    let catHistDataX = histData.scaleX.categorical;
-    const catDomainX = catHistDataX.length === 0 ? null : catHistDataX.map(d => d);
+        histData = response["histogram"];
 
-    let numHistDataY = histData.scaleY.numeric;
-    const numDomainY = numHistDataY.length === 0 ? null : [d3.min(numHistDataY, (d) => d.x0), d3.max(numHistDataY, (d) => d.x1)];
-    let catHistDataY = histData.scaleY.categorical;
-    const catDomainY = catHistDataY.length === 0 ? null : catHistDataY.map(d => d);
+        if (!histData) {
+            console.error("[HEATMAP] No histogram data in response:", response);
+            throw new Error("No histogram data returned from server");
+        }
+
+        console.log("[HEATMAP] Histogram data:", histData);
+
+        let backgroundBox = createBackgroundBox(canvas, view.plotSize, view.plotSize);
+
+        let numHistDataX = histData.scaleX.numeric || [];
+        let catHistDataX = histData.scaleX.categorical || [];
+        let numHistDataY = histData.scaleY.numeric || [];
+        let catHistDataY = histData.scaleY.categorical || [];
+
+        const numDomainX = (numHistDataX.length === 0 || !numHistDataX[0]) ? null : [d3.min(numHistDataX, (d) => d.x0), d3.max(numHistDataX, (d) => d.x1)];
+        const catDomainX = catHistDataX.length === 0 ? null : catHistDataX.map(d => d);
+
+        const numDomainY = (numHistDataY.length === 0 || !numHistDataY[0]) ? null : [d3.min(numHistDataY, (d) => d.x0), d3.max(numHistDataY, (d) => d.x1)];
+        const catDomainY = catHistDataY.length === 0 ? null : catHistDataY.map(d => d);
 
     const xScale = createHybridScales(view.plotSize, numHistDataX, catHistDataX, numDomainX, catDomainX, "horizontal");
     const yScale = createHybridScales(view.plotSize, numHistDataY, catHistDataY, numDomainY, catDomainY, "vertical");
