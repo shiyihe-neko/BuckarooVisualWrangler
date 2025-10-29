@@ -128,6 +128,7 @@ async function queryHistogram2d(columnX,columnY,tableName,minId,maxID,bins) {
 }
 
 
+
 /**
  * Get the scatterplot data from the pandas for the view
  * @param xColumn
