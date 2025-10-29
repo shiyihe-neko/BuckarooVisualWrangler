@@ -114,22 +114,22 @@ DB_FUNCTIONS = {
                 'histograms',
                 CASE WHEN $3 THEN
                     -- For numeric: cast bin to integer
-                    (SELECT json_agg(
+                    (SELECT COALESCE(json_agg(
                         json_build_object(
                             'xBin', bin::integer,
                             'xType', 'numeric',
                             'count', COALESCE(errors, '{}'::jsonb) || jsonb_build_object('items', total_items)
                         ) ORDER BY bin::integer
-                    ) FROM histogram_bins)
+                    ), '[]'::json) FROM histogram_bins)
                 ELSE
                     -- For categorical: keep bin as text
-                    (SELECT json_agg(
+                    (SELECT COALESCE(json_agg(
                         json_build_object(
                             'xBin', bin,
                             'xType', 'categorical',
                             'count', COALESCE(errors, '{}'::jsonb) || jsonb_build_object('items', total_items)
                         ) ORDER BY bin
-                    ) FROM histogram_bins)
+                    ), '[]'::json) FROM histogram_bins)
                 END,
                 'scaleX',
                 json_build_object(
@@ -303,7 +303,7 @@ DB_FUNCTIONS = {
                 CASE
                     WHEN $3 AND $4 THEN
                         -- Both numeric
-                        (SELECT json_agg(
+                        (SELECT COALESCE(json_agg(
                             json_build_object(
                                 'xBin', x_bin::integer,
                                 'yBin', y_bin::integer,
@@ -311,10 +311,10 @@ DB_FUNCTIONS = {
                                 'yType', 'numeric',
                                 'count', COALESCE(errors, '{}'::jsonb) || jsonb_build_object('items', total_items)
                             ) ORDER BY x_bin::integer, y_bin::integer
-                        ) FROM histogram_bins)
+                        ), '[]'::json) FROM histogram_bins)
                     WHEN $3 AND NOT $4 THEN
                         -- X numeric, Y categorical
-                        (SELECT json_agg(
+                        (SELECT COALESCE(json_agg(
                             json_build_object(
                                 'xBin', x_bin::integer,
                                 'yBin', y_bin,
@@ -322,10 +322,10 @@ DB_FUNCTIONS = {
                                 'yType', 'categorical',
                                 'count', COALESCE(errors, '{}'::jsonb) || jsonb_build_object('items', total_items)
                             ) ORDER BY x_bin::integer, y_bin
-                        ) FROM histogram_bins)
+                        ), '[]'::json) FROM histogram_bins)
                     WHEN NOT $3 AND $4 THEN
                         -- X categorical, Y numeric
-                        (SELECT json_agg(
+                        (SELECT COALESCE(json_agg(
                             json_build_object(
                                 'xBin', x_bin,
                                 'yBin', y_bin::integer,
@@ -333,10 +333,10 @@ DB_FUNCTIONS = {
                                 'yType', 'numeric',
                                 'count', COALESCE(errors, '{}'::jsonb) || jsonb_build_object('items', total_items)
                             ) ORDER BY x_bin, y_bin::integer
-                        ) FROM histogram_bins)
+                        ), '[]'::json) FROM histogram_bins)
                     ELSE
                         -- Both categorical
-                        (SELECT json_agg(
+                        (SELECT COALESCE(json_agg(
                             json_build_object(
                                 'xBin', x_bin,
                                 'yBin', y_bin,
@@ -344,7 +344,7 @@ DB_FUNCTIONS = {
                                 'yType', 'categorical',
                                 'count', COALESCE(errors, '{}'::jsonb) || jsonb_build_object('items', total_items)
                             ) ORDER BY x_bin, y_bin
-                        ) FROM histogram_bins)
+                        ), '[]'::json) FROM histogram_bins)
                 END,
                 'scaleX', json_build_object(
                     'numeric', CASE WHEN $3 THEN
