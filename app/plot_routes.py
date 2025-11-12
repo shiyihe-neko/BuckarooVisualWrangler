@@ -24,7 +24,10 @@ from flask import request
 from app import app, engine
 from app.service_helpers import clean_table_name
 
-USE_PANDAS_FOR_HISTOGRAMS = True
+# Toggle between pandas (in-memory) and PostgreSQL (database) histogram generation
+# False = Use PostgreSQL stored procedures with database tables (recommended)
+# True  = Use pandas with data_state_manager (legacy, for testing)
+USE_PANDAS_FOR_HISTOGRAMS = False
 
 @app.get("/api/plots/1-d-histogram")
 def get_1d_histogram():
@@ -51,7 +54,7 @@ def get_1d_histogram():
             histogram = result["generate_one_d_histogram_with_errors"][0]
 
         return {"Success": True, "histogram": histogram}
-            
+
     except Exception as e:
         return {"Success": False, "Error": str(e)}
 
@@ -84,12 +87,12 @@ def get_2d_histogram():
                 )
 
         else:
-            query = f"SELECT generate_two_d_histogram_with_errors('{table}', 'errors{table}', '{column_x}','{column_y}', {x_bins},{y_bins}, {min_id}, {max_id});"
-            binned_data = pd.read_sql_query(query, engine).to_dict()
+            query_str = f"SELECT generate_two_d_histogram_with_errors('{table}', 'errors{table}', '{column_x}','{column_y}', {x_bins},{y_bins}, {min_id}, {max_id});"
+            binned_data = pd.read_sql_query(query_str, engine).to_dict()
             histogram = binned_data["generate_two_d_histogram_with_errors"][0]
 
         return {"Success": True, "histogram": histogram}
-        
+
     except Exception as e:
         return {"Success": False, "Error": str(e)}
 

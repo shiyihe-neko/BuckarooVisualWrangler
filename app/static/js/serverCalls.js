@@ -74,7 +74,7 @@ async function getErrorData(filename,dataSize) {
 }
 
 /**
- * Get the data for the 1d histogram in the view - pandas version
+ * Get the data for the 1d histogram in the view
  * @returns {Promise<void>}
  */
 async function queryHistogram1d(columnName,tableName,minId,maxId,binCount) {
@@ -107,7 +107,7 @@ async function queryHistogram1d(columnName,tableName,minId,maxId,binCount) {
  * @param bins
  * @returns {Promise<any>}
  */
-export async function queryHistogram2d(columnX,columnY,tableName,minId,maxID,bins) {
+async function queryHistogram2d(columnX,columnY,tableName,minId,maxID,bins) {
     console.log("1d histogram fetch");
     const params = new URLSearchParams({
         column_x:columnX,
@@ -117,7 +117,7 @@ export async function queryHistogram2d(columnX,columnY,tableName,minId,maxID,bin
         max_id: maxID,
         x_bins: bins,
         y_bins: bins});
-    const url = `/api/plots/2-d-histogram-data?${params}`
+    const url = `/api/plots/2-d-histogram?${params}`
     try{
         const response = await fetch(url, {method: "GET"});
         return await response.json();
@@ -126,6 +126,7 @@ export async function queryHistogram2d(columnX,columnY,tableName,minId,maxID,bin
         console.error(error.message)
     }
 }
+
 
 
 /**
@@ -180,7 +181,7 @@ export async function queryAttributeSummaries(minId, maxId) {
 }
 
 
-export async function wrangleRemove(xCol,minId, maxId) {
+export async function wrangleRemove(xCol, minId, maxId) {
     const params = new URLSearchParams({
         min_id:minId,
         max_id:maxId,});
@@ -196,4 +197,4 @@ export async function wrangleRemove(xCol,minId, maxId) {
 }
 
 
-export {uploadFileToDB,getSampleData, getErrorData, queryHistogram1d, queryHistogram2d};
+export {uploadFileToDB, getSampleData, getErrorData, queryHistogram1d, queryHistogram2d};

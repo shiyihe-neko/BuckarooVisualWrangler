@@ -8,7 +8,421 @@ logger = logging.getLogger(__name__)
 # Dictionary to store all the user's database functions
 DB_FUNCTIONS = {
     "generate_one_d_histogram_with_errors": """
+    -- Simplified unified version - single query path for numeric and categorical
+    -- Fixed: Changed nested dollar-quote from $SQL$ to $QUERY$ to avoid parsing issues
     CREATE OR REPLACE FUNCTION generate_one_d_histogram_with_errors(
+        main_table_name text,
+        error_table_name text,
+        axis_column text,
+        bin_count integer DEFAULT 10,
+        min_id integer DEFAULT NULL,
+        max_id integer DEFAULT NULL
+    ) RETURNS json
+    LANGUAGE plpgsql
+    AS $FUNC$
+    DECLARE
+        result json;
+        is_numeric boolean;
+    BEGIN
+        -- Check if column is numeric
+        SELECT data_type IN ('integer', 'bigint', 'numeric', 'real', 'double precision', 'smallint')
+        INTO is_numeric
+        FROM information_schema.columns
+        WHERE table_name = main_table_name AND column_name = axis_column;
+
+        -- Single unified query for both numeric and categorical
+        EXECUTE format($QUERY$
+            WITH
+            -- Step 1: Get all data rows with optional ID filtering
+            data_rows AS (
+                SELECT
+                    "ID",
+                    %I as value
+                FROM %I
+                WHERE %I IS NOT NULL
+                  AND ($1 IS NULL OR "ID" >= $1)
+                  AND ($2 IS NULL OR "ID" <= $2)
+            ),
+            -- Step 2: Assign bins (keep as text for both numeric and categorical)
+            binned_data AS (
+                SELECT
+                    d."ID",
+                    CASE
+                        WHEN $3 THEN  -- is_numeric
+                            -- Clamp bin number to 0..(bin_count-1) range
+                            LEAST(
+                                GREATEST(
+                                    COALESCE(
+                                        width_bucket(
+                                            d.value::numeric,
+                                            (SELECT MIN(value::numeric) FROM data_rows),
+                                            (SELECT MAX(value::numeric) FROM data_rows),
+                                            $4
+                                        ) - 1,
+                                        0
+                                    ),
+                                    0
+                                ),
+                                $4 - 1
+                            )::text
+                        ELSE
+                            d.value::text
+                    END as bin
+                FROM data_rows d
+            ),
+            -- Step 3: Get error counts per bin
+            errors_per_bin AS (
+                SELECT
+                    b.bin,
+                    e.error_type,
+                    COUNT(*) as error_count
+                FROM binned_data b
+                JOIN %I e ON b."ID" = e.row_id
+                WHERE e.column_id = $5
+                GROUP BY b.bin, e.error_type
+            ),
+            -- Step 4: Aggregate by bin
+            histogram_bins AS (
+                SELECT
+                    b.bin,
+                    COUNT(*) as total_items,
+                    jsonb_object_agg(
+                        e.error_type,
+                        e.error_count
+                    ) FILTER (WHERE e.error_type IS NOT NULL) as errors
+                FROM binned_data b
+                LEFT JOIN errors_per_bin e ON b.bin = e.bin
+                GROUP BY b.bin
+            ),
+            -- Step 5: Build scale data for numeric columns (ALL bins, not just ones with data)
+            numeric_scale_data AS (
+                SELECT
+                    n as bin_num,
+                    CASE WHEN $3 THEN
+                        (SELECT MIN(value::numeric) FROM data_rows) +
+                        (n * ((SELECT MAX(value::numeric) FROM data_rows) - (SELECT MIN(value::numeric) FROM data_rows)) / $4::numeric)
+                    ELSE NULL END as x0,
+                    CASE WHEN $3 THEN
+                        (SELECT MIN(value::numeric) FROM data_rows) +
+                        ((n+1) * ((SELECT MAX(value::numeric) FROM data_rows) - (SELECT MIN(value::numeric) FROM data_rows)) / $4::numeric)
+                    ELSE NULL END as x1
+                FROM generate_series(0, $4-1) n
+                WHERE $3
+            )
+            -- Step 6: Build final JSON (split into two subqueries to avoid type mismatch)
+            SELECT json_build_object(
+                'histograms',
+                CASE WHEN $3 THEN
+                    -- For numeric: cast bin to integer
+                    (SELECT COALESCE(json_agg(
+                        json_build_object(
+                            'xBin', bin::integer,
+                            'xType', 'numeric',
+                            'count', COALESCE(errors, '{}'::jsonb) || jsonb_build_object('items', total_items)
+                        ) ORDER BY bin::integer
+                    ), '[]'::json) FROM histogram_bins)
+                ELSE
+                    -- For categorical: keep bin as text
+                    (SELECT COALESCE(json_agg(
+                        json_build_object(
+                            'xBin', bin,
+                            'xType', 'categorical',
+                            'count', COALESCE(errors, '{}'::jsonb) || jsonb_build_object('items', total_items)
+                        ) ORDER BY bin
+                    ), '[]'::json) FROM histogram_bins)
+                END,
+                'scaleX',
+                json_build_object(
+                    'numeric', CASE WHEN $3 THEN
+                        (SELECT COALESCE(json_agg(json_build_object('x0', x0, 'x1', x1) ORDER BY bin_num), '[]'::json) FROM numeric_scale_data)
+                    ELSE '[]'::json END,
+                    'categorical', CASE WHEN NOT $3 THEN
+                        (SELECT COALESCE(json_agg(bin ORDER BY bin), '[]'::json) FROM histogram_bins)
+                    ELSE '[]'::json END
+                )
+            )
+        $QUERY$,
+            axis_column,              -- %I: column name in data_rows SELECT
+            main_table_name,          -- %I: main table name
+            axis_column,              -- %I: WHERE column IS NOT NULL
+            error_table_name          -- %I: error table name
+        )
+        USING min_id, max_id, is_numeric, bin_count, axis_column
+        INTO result;
+
+        RETURN result;
+    END;
+    $FUNC$;
+    """,
+    "generate_two_d_histogram_with_errors": """
+    -- Simplified unified version - single query path for all type combinations
+    -- Follows the same pattern as 1D histogram
+    CREATE OR REPLACE FUNCTION generate_two_d_histogram_with_errors(
+        main_table_name text,
+        error_table_name text,
+        x_axis_column text,
+        y_axis_column text,
+        x_bin_count integer DEFAULT 10,
+        y_bin_count integer DEFAULT 10,
+        min_id integer DEFAULT NULL,
+        max_id integer DEFAULT NULL
+    ) RETURNS json
+    LANGUAGE plpgsql
+    AS $FUNC$
+    DECLARE
+        result json;
+        x_is_numeric boolean;
+        y_is_numeric boolean;
+    BEGIN
+        -- Check if columns are numeric
+        SELECT data_type IN ('integer', 'bigint', 'numeric', 'real', 'double precision', 'smallint')
+        INTO x_is_numeric
+        FROM information_schema.columns
+        WHERE table_name = main_table_name AND column_name = x_axis_column;
+
+        SELECT data_type IN ('integer', 'bigint', 'numeric', 'real', 'double precision', 'smallint')
+        INTO y_is_numeric
+        FROM information_schema.columns
+        WHERE table_name = main_table_name AND column_name = y_axis_column;
+
+        -- Single unified query for all type combinations
+        EXECUTE format($QUERY$
+            WITH
+            -- Step 1: Get all data rows with optional ID filtering
+            data_rows AS (
+                SELECT
+                    "ID",
+                    %I as x_value,
+                    %I as y_value
+                FROM %I
+                WHERE %I IS NOT NULL
+                  AND %I IS NOT NULL
+                  AND ($1 IS NULL OR "ID" >= $1)
+                  AND ($2 IS NULL OR "ID" <= $2)
+            ),
+            -- Step 2: Get min/max for numeric columns (for width_bucket)
+            x_bounds AS (
+                SELECT
+                    COALESCE(MIN(x_value::numeric), 0) as min_val,
+                    COALESCE(MAX(x_value::numeric), 1) as max_val
+                FROM data_rows
+                WHERE $3  -- only compute for numeric
+            ),
+            y_bounds AS (
+                SELECT
+                    COALESCE(MIN(y_value::numeric), 0) as min_val,
+                    COALESCE(MAX(y_value::numeric), 1) as max_val
+                FROM data_rows
+                WHERE $4  -- only compute for numeric
+            ),
+            -- Step 3: Assign bins for both X and Y
+            binned_data AS (
+                SELECT
+                    d."ID",
+                    CASE
+                        WHEN $3 THEN  -- x_is_numeric: clamp to [0, bin_count-1]
+                            LEAST(GREATEST(
+                                width_bucket(
+                                    d.x_value::numeric,
+                                    (SELECT min_val FROM x_bounds),
+                                    (SELECT max_val FROM x_bounds),
+                                    $5
+                                ) - 1,
+                                0
+                            ), $5 - 1)::text
+                        ELSE
+                            d.x_value::text
+                    END as x_bin,
+                    CASE
+                        WHEN $4 THEN  -- y_is_numeric: clamp to [0, bin_count-1]
+                            LEAST(GREATEST(
+                                width_bucket(
+                                    d.y_value::numeric,
+                                    (SELECT min_val FROM y_bounds),
+                                    (SELECT max_val FROM y_bounds),
+                                    $6
+                                ) - 1,
+                                0
+                            ), $6 - 1)::text
+                        ELSE
+                            d.y_value::text
+                    END as y_bin
+                FROM data_rows d
+            ),
+            -- Step 5: Get error counts per (x_bin, y_bin) pair
+            errors_per_bin AS (
+                SELECT
+                    b.x_bin,
+                    b.y_bin,
+                    e.error_type,
+                    COUNT(*) as error_count
+                FROM binned_data b
+                JOIN %I e ON b."ID" = e.row_id
+                WHERE e.column_id IN ($7, $8)
+                GROUP BY b.x_bin, b.y_bin, e.error_type
+            ),
+            -- Step 6: Aggregate by bin
+            histogram_bins AS (
+                SELECT
+                    b.x_bin,
+                    b.y_bin,
+                    COUNT(*) as total_items,
+                    jsonb_object_agg(
+                        e.error_type,
+                        e.error_count
+                    ) FILTER (WHERE e.error_type IS NOT NULL) as errors
+                FROM binned_data b
+                LEFT JOIN errors_per_bin e ON b.x_bin = e.x_bin AND b.y_bin = e.y_bin
+                GROUP BY b.x_bin, b.y_bin
+            ),
+            -- Step 7: Build X scale data for numeric columns
+            x_numeric_scale_data AS (
+                SELECT
+                    n as bin_num,
+                    (SELECT min_val FROM x_bounds) +
+                        (n * ((SELECT max_val FROM x_bounds) - (SELECT min_val FROM x_bounds)) / $5::numeric) as x0,
+                    (SELECT min_val FROM x_bounds) +
+                        ((n+1) * ((SELECT max_val FROM x_bounds) - (SELECT min_val FROM x_bounds)) / $5::numeric) as x1
+                FROM generate_series(0, $5-1) n
+                WHERE $3  -- only generate for numeric columns
+            ),
+            -- Step 8: Build Y scale data for numeric columns
+            y_numeric_scale_data AS (
+                SELECT
+                    n as bin_num,
+                    (SELECT min_val FROM y_bounds) +
+                        (n * ((SELECT max_val FROM y_bounds) - (SELECT min_val FROM y_bounds)) / $6::numeric) as x0,
+                    (SELECT min_val FROM y_bounds) +
+                        ((n+1) * ((SELECT max_val FROM y_bounds) - (SELECT min_val FROM y_bounds)) / $6::numeric) as x1
+                FROM generate_series(0, $6-1) n
+                WHERE $4  -- only generate for numeric columns
+            )
+            -- Step 9: Build final JSON (split into 4 type combinations to avoid type mismatch)
+            SELECT json_build_object(
+                'histograms',
+                CASE
+                    WHEN $3 AND $4 THEN
+                        -- Both numeric
+                        (SELECT COALESCE(json_agg(
+                            json_build_object(
+                                'xBin', x_bin::integer,
+                                'yBin', y_bin::integer,
+                                'xType', 'numeric',
+                                'yType', 'numeric',
+                                'count', COALESCE(errors, '{}'::jsonb) || jsonb_build_object('items', total_items)
+                            ) ORDER BY x_bin::integer, y_bin::integer
+                        ), '[]'::json) FROM histogram_bins)
+                    WHEN $3 AND NOT $4 THEN
+                        -- X numeric, Y categorical
+                        (SELECT COALESCE(json_agg(
+                            json_build_object(
+                                'xBin', x_bin::integer,
+                                'yBin', y_bin,
+                                'xType', 'numeric',
+                                'yType', 'categorical',
+                                'count', COALESCE(errors, '{}'::jsonb) || jsonb_build_object('items', total_items)
+                            ) ORDER BY x_bin::integer, y_bin
+                        ), '[]'::json) FROM histogram_bins)
+                    WHEN NOT $3 AND $4 THEN
+                        -- X categorical, Y numeric
+                        (SELECT COALESCE(json_agg(
+                            json_build_object(
+                                'xBin', x_bin,
+                                'yBin', y_bin::integer,
+                                'xType', 'categorical',
+                                'yType', 'numeric',
+                                'count', COALESCE(errors, '{}'::jsonb) || jsonb_build_object('items', total_items)
+                            ) ORDER BY x_bin, y_bin::integer
+                        ), '[]'::json) FROM histogram_bins)
+                    ELSE
+                        -- Both categorical
+                        (SELECT COALESCE(json_agg(
+                            json_build_object(
+                                'xBin', x_bin,
+                                'yBin', y_bin,
+                                'xType', 'categorical',
+                                'yType', 'categorical',
+                                'count', COALESCE(errors, '{}'::jsonb) || jsonb_build_object('items', total_items)
+                            ) ORDER BY x_bin, y_bin
+                        ), '[]'::json) FROM histogram_bins)
+                END,
+                'scaleX', json_build_object(
+                    'numeric', CASE WHEN $3 THEN
+                        (SELECT COALESCE(json_agg(json_build_object('x0', x0, 'x1', x1) ORDER BY bin_num), '[]'::json) FROM x_numeric_scale_data)
+                    ELSE '[]'::json END,
+                    'categorical', CASE WHEN NOT $3 THEN
+                        (SELECT COALESCE(json_agg(DISTINCT x_bin ORDER BY x_bin), '[]'::json) FROM histogram_bins)
+                    ELSE '[]'::json END
+                ),
+                'scaleY', json_build_object(
+                    'numeric', CASE WHEN $4 THEN
+                        (SELECT COALESCE(json_agg(json_build_object('x0', x0, 'x1', x1) ORDER BY bin_num), '[]'::json) FROM y_numeric_scale_data)
+                    ELSE '[]'::json END,
+                    'categorical', CASE WHEN NOT $4 THEN
+                        (SELECT COALESCE(json_agg(DISTINCT y_bin ORDER BY y_bin), '[]'::json) FROM histogram_bins)
+                    ELSE '[]'::json END
+                )
+            )
+        $QUERY$,
+            x_axis_column,              -- %I: x column name
+            y_axis_column,              -- %I: y column name
+            main_table_name,            -- %I: main table name
+            x_axis_column,              -- %I: WHERE x IS NOT NULL
+            y_axis_column,              -- %I: WHERE y IS NOT NULL
+            error_table_name            -- %I: error table name
+        )
+        USING min_id, max_id, x_is_numeric, y_is_numeric, x_bin_count, y_bin_count, x_axis_column, y_axis_column
+        INTO result;
+
+        RETURN result;
+    END;
+    $FUNC$;
+    """,
+    # Add more functions here as needed
+    # "another_function_name": """CREATE OR REPLACE FUNCTION...""",
+}
+
+
+def initialize_database_functions(engine):
+    """
+    Create all custom database functions on startup
+    """
+    logger.info("Initializing database functions...")
+
+    try:
+        with engine.connect() as conn:
+            # Begin a transaction
+            trans = conn.begin()
+
+            for func_name, func_sql in DB_FUNCTIONS.items():
+                try:
+                    logger.info(f"Creating function: {func_name}")
+                    conn.execute(text(func_sql))
+                    logger.info(f"Successfully created function: {func_name}")
+                except Exception as e:
+                    logger.error(f"Failed to create function {func_name}: {str(e)}")
+                    trans.rollback()
+                    raise
+
+            # Commit all functions
+            trans.commit()
+            logger.info("All database functions initialized successfully!")
+
+    except Exception as e:
+        logger.error(f"Database function initialization failed: {str(e)}")
+        raise
+
+
+##############################################################################################################
+# DEPRECATED FUNCTIONS - KEPT FOR REFERENCE
+##############################################################################################################
+
+DEPRECATED_FUNCTIONS = {
+    "generate_one_d_histogram_with_errors_ORIGINAL": """
+    -- DEPRECATED: Original working version with separate IF/ELSE paths
+    -- This is the proven working version - kept for rollback if needed
+
+    CREATE OR REPLACE FUNCTION generate_one_d_histogram_with_errors_ORIGINAL(
         main_table_name text,
         error_table_name text,
         axis_column text,
@@ -45,8 +459,8 @@ DB_FUNCTIONS = {
 
         -- Determine if column is numeric
         EXECUTE format('
-            SELECT data_type 
-            FROM information_schema.columns 
+            SELECT data_type
+            FROM information_schema.columns
             WHERE table_name = %L AND column_name = %L',
             main_table_name, axis_column
         ) INTO column_type;
@@ -57,12 +471,12 @@ DB_FUNCTIONS = {
             -- Numeric binning logic with errors and ID filtering
             EXECUTE format('
                 WITH bin_ranges AS (
-                    SELECT 
+                    SELECT
                         generate_series(0, %s-1) as bin_num,
                         min_val + (generate_series(0, %s-1) * bin_width) as x0,
                         min_val + (generate_series(1, %s) * bin_width) as x1
                     FROM (
-                        SELECT 
+                        SELECT
                             MIN(%s::numeric) as min_val,
                             MAX(%s::numeric) as max_val,
                             (MAX(%s::numeric) - MIN(%s::numeric)) / %s::numeric as bin_width
@@ -71,7 +485,7 @@ DB_FUNCTIONS = {
                     ) bounds
                 ),
                 data_with_bins AS (
-                    SELECT 
+                    SELECT
                         m."ID",
                         br.bin_num,
                         br.x0,
@@ -81,7 +495,7 @@ DB_FUNCTIONS = {
                     WHERE m.%s IS NOT NULL%s
                 ),
                 binned_counts AS (
-                    SELECT 
+                    SELECT
                         bin_num,
                         x0,
                         x1,
@@ -90,7 +504,7 @@ DB_FUNCTIONS = {
                     GROUP BY bin_num, x0, x1
                 ),
                 error_counts AS (
-                    SELECT 
+                    SELECT
                         dwb.bin_num,
                         e.error_type,
                         COUNT(*) as error_count
@@ -100,20 +514,20 @@ DB_FUNCTIONS = {
                     GROUP BY dwb.bin_num, e.error_type
                 ),
                 final_bins AS (
-                    SELECT 
+                    SELECT
                         bc.bin_num,
                         bc.x0,
                         bc.x1,
                         bc.item_count,
-                        CASE 
-                            WHEN error_agg.error_json IS NULL THEN 
+                        CASE
+                            WHEN error_agg.error_json IS NULL THEN
                                 json_build_object(''items'', bc.item_count)
-                            ELSE 
+                            ELSE
                                 (error_agg.error_json::jsonb || json_build_object(''items'', bc.item_count)::jsonb)::json
                         END as count_obj
                     FROM binned_counts bc
                     LEFT JOIN (
-                        SELECT 
+                        SELECT
                             bin_num,
                             json_object_agg(error_type, error_count) as error_json
                         FROM error_counts
@@ -163,26 +577,26 @@ DB_FUNCTIONS = {
                     )
                 )
                 FROM (
-                    SELECT 
+                    SELECT
                         m.bin_value,
-                        CASE 
-                            WHEN error_counts IS NULL THEN 
+                        CASE
+                            WHEN error_counts IS NULL THEN
                                 json_build_object(''items'', item_count)
-                            ELSE 
+                            ELSE
                                 (error_counts::jsonb || json_build_object(''items'', item_count)::jsonb)::json
                         END as count_obj
                     FROM (
                         SELECT %s as bin_value, COUNT(*) as item_count
-                        FROM %I 
+                        FROM %I
                         WHERE %s IS NOT NULL%s
                         GROUP BY %s
                     ) m
                     LEFT JOIN (
-                        SELECT 
+                        SELECT
                             main_val,
                             json_object_agg(error_type, error_count)::json as error_counts
                         FROM (
-                            SELECT 
+                            SELECT
                                 m2.%s as main_val,
                                 e.error_type,
                                 COUNT(*) as error_count
@@ -203,8 +617,12 @@ DB_FUNCTIONS = {
     END;
     $FUNC$;
     """,
-    "generate_two_d_histogram_with_errors": """
-     CREATE OR REPLACE FUNCTION generate_two_d_histogram_with_errors(
+    "generate_two_d_histogram_with_errors_ORIGINAL": """
+    -- DEPRECATED: Original working version with separate IF/ELSE paths for each type combination
+    -- This is the proven working version - kept for rollback if needed
+    -- This version had 4 separate branches: numeric×numeric, numeric×categorical, categorical×numeric, categorical×categorical
+
+     CREATE OR REPLACE FUNCTION generate_two_d_histogram_with_errors_ORIGINAL(
         main_table_name text,
         error_table_name text,
         x_axis_column text,
@@ -229,7 +647,7 @@ DB_FUNCTIONS = {
     BEGIN
         quoted_x_column := '"' || x_axis_column || '"';
         quoted_y_column := '"' || y_axis_column || '"';
-        
+
         -- Build ID filter conditions (same as 1D)
         IF min_id IS NOT NULL AND max_id IS NOT NULL THEN
             id_filter := format(' AND "ID" BETWEEN %s AND %s', min_id, max_id);
@@ -244,35 +662,35 @@ DB_FUNCTIONS = {
             id_filter := '';
             error_id_filter := '';
         END IF;
-        
+
         -- Determine column types (same as 1D)
         EXECUTE format('
-            SELECT data_type 
-            FROM information_schema.columns 
+            SELECT data_type
+            FROM information_schema.columns
             WHERE table_name = %L AND column_name = %L',
             main_table_name, x_axis_column
         ) INTO x_column_type;
-        
+
         EXECUTE format('
-            SELECT data_type 
-            FROM information_schema.columns 
+            SELECT data_type
+            FROM information_schema.columns
             WHERE table_name = %L AND column_name = %L',
             main_table_name, y_axis_column
         ) INTO y_column_type;
-        
+
         x_is_numeric := x_column_type IN ('integer', 'bigint', 'numeric', 'real', 'double precision', 'smallint');
         y_is_numeric := y_column_type IN ('integer', 'bigint', 'numeric', 'real', 'double precision', 'smallint');
-        
+
         IF x_is_numeric AND y_is_numeric THEN
             -- Both numeric
             EXECUTE format('
                 WITH x_bin_ranges AS (
-                    SELECT 
+                    SELECT
                         generate_series(0, %s-1) as x_bin_num,
                         min_val + (generate_series(0, %s-1) * bin_width) as x0,
                         min_val + (generate_series(1, %s) * bin_width) as x1
                     FROM (
-                        SELECT 
+                        SELECT
                             MIN(%s::numeric) as min_val,
                             MAX(%s::numeric) as max_val,
                             (MAX(%s::numeric) - MIN(%s::numeric)) / %s::numeric as bin_width
@@ -281,12 +699,12 @@ DB_FUNCTIONS = {
                     ) bounds
                 ),
                 y_bin_ranges AS (
-                    SELECT 
+                    SELECT
                         generate_series(0, %s-1) as y_bin_num,
                         min_val + (generate_series(0, %s-1) * bin_width) as y0,
                         min_val + (generate_series(1, %s) * bin_width) as y1
                     FROM (
-                        SELECT 
+                        SELECT
                             MIN(%s::numeric) as min_val,
                             MAX(%s::numeric) as max_val,
                             (MAX(%s::numeric) - MIN(%s::numeric)) / %s::numeric as bin_width
@@ -295,7 +713,7 @@ DB_FUNCTIONS = {
                     ) bounds
                 ),
                 all_bins AS (
-                    SELECT 
+                    SELECT
                         xbr.x_bin_num,
                         ybr.y_bin_num,
                         xbr.x0,
@@ -306,18 +724,18 @@ DB_FUNCTIONS = {
                     CROSS JOIN y_bin_ranges ybr
                 ),
                 data_with_bins AS (
-                    SELECT 
+                    SELECT
                         m."ID",
                         ab.x_bin_num,
                         ab.y_bin_num
                     FROM %I m
-                    JOIN all_bins ab ON 
+                    JOIN all_bins ab ON
                         m.%s::numeric >= ab.x0 AND m.%s::numeric < ab.x1 AND
                         m.%s::numeric >= ab.y0 AND m.%s::numeric < ab.y1
                     WHERE m.%s IS NOT NULL AND m.%s IS NOT NULL%s
                 ),
                 binned_counts AS (
-                    SELECT 
+                    SELECT
                         x_bin_num,
                         y_bin_num,
                         COUNT(*) as item_count
@@ -325,7 +743,7 @@ DB_FUNCTIONS = {
                     GROUP BY x_bin_num, y_bin_num
                 ),
                 error_counts AS (
-                    SELECT 
+                    SELECT
                         dwb.x_bin_num,
                         dwb.y_bin_num,
                         e.error_type,
@@ -336,19 +754,19 @@ DB_FUNCTIONS = {
                     GROUP BY dwb.x_bin_num, dwb.y_bin_num, e.error_type
                 ),
                 final_bins AS (
-                    SELECT 
+                    SELECT
                         bc.x_bin_num,
                         bc.y_bin_num,
                         bc.item_count,
-                        CASE 
-                            WHEN error_agg.error_json IS NULL THEN 
+                        CASE
+                            WHEN error_agg.error_json IS NULL THEN
                                 json_build_object(''items'', bc.item_count)
-                            ELSE 
+                            ELSE
                                 (error_agg.error_json::jsonb || json_build_object(''items'', bc.item_count)::jsonb)::json
                         END as count_obj
                     FROM binned_counts bc
                     LEFT JOIN (
-                        SELECT 
+                        SELECT
                             x_bin_num,
                             y_bin_num,
                             json_object_agg(error_type, error_count) as error_json
@@ -397,17 +815,17 @@ DB_FUNCTIONS = {
                 main_table_name, quoted_x_column, quoted_x_column, quoted_y_column, quoted_y_column, quoted_x_column, quoted_y_column, id_filter,
                 error_table_name, x_axis_column, y_axis_column
             ) INTO result;
-            
+
         ELSIF x_is_numeric AND NOT y_is_numeric THEN
             -- X numeric, Y categorical
             EXECUTE format('
                 WITH x_bin_ranges AS (
-                    SELECT 
+                    SELECT
                         generate_series(0, %s-1) as x_bin_num,
                         min_val + (generate_series(0, %s-1) * bin_width) as x0,
                         min_val + (generate_series(1, %s) * bin_width) as x1
                     FROM (
-                        SELECT 
+                        SELECT
                             MIN(%s::numeric) as min_val,
                             MAX(%s::numeric) as max_val,
                             (MAX(%s::numeric) - MIN(%s::numeric)) / %s::numeric as bin_width
@@ -421,7 +839,7 @@ DB_FUNCTIONS = {
                     WHERE %s IS NOT NULL%s
                 ),
                 all_bins AS (
-                    SELECT 
+                    SELECT
                         xbr.x_bin_num,
                         yc.y_value,
                         xbr.x0,
@@ -430,18 +848,18 @@ DB_FUNCTIONS = {
                     CROSS JOIN y_categories yc
                 ),
                 data_with_bins AS (
-                    SELECT 
+                    SELECT
                         m."ID",
                         ab.x_bin_num,
                         ab.y_value
                     FROM %I m
-                    JOIN all_bins ab ON 
+                    JOIN all_bins ab ON
                         m.%s::numeric >= ab.x0 AND m.%s::numeric < ab.x1 AND
                         m.%s = ab.y_value
                     WHERE m.%s IS NOT NULL AND m.%s IS NOT NULL%s
                 ),
                 binned_counts AS (
-                    SELECT 
+                    SELECT
                         x_bin_num,
                         y_value,
                         COUNT(*) as item_count
@@ -449,7 +867,7 @@ DB_FUNCTIONS = {
                     GROUP BY x_bin_num, y_value
                 ),
                 error_counts AS (
-                    SELECT 
+                    SELECT
                         dwb.x_bin_num,
                         dwb.y_value,
                         e.error_type,
@@ -460,19 +878,19 @@ DB_FUNCTIONS = {
                     GROUP BY dwb.x_bin_num, dwb.y_value, e.error_type
                 ),
                 final_bins AS (
-                    SELECT 
+                    SELECT
                         bc.x_bin_num,
                         bc.y_value,
                         bc.item_count,
-                        CASE 
-                            WHEN error_agg.error_json IS NULL THEN 
+                        CASE
+                            WHEN error_agg.error_json IS NULL THEN
                                 json_build_object(''items'', bc.item_count)
-                            ELSE 
+                            ELSE
                                 (error_agg.error_json::jsonb || json_build_object(''items'', bc.item_count)::jsonb)::json
                         END as count_obj
                     FROM binned_counts bc
                     LEFT JOIN (
-                        SELECT 
+                        SELECT
                             x_bin_num,
                             y_value,
                             json_object_agg(error_type, error_count) as error_json
@@ -513,17 +931,17 @@ DB_FUNCTIONS = {
                 main_table_name, quoted_x_column, quoted_x_column, quoted_y_column, quoted_x_column, quoted_y_column, id_filter,
                 error_table_name, x_axis_column, y_axis_column
             ) INTO result;
-            
+
         ELSIF NOT x_is_numeric AND y_is_numeric THEN
             -- X categorical, Y numeric
             EXECUTE format('
                 WITH y_bin_ranges AS (
-                    SELECT 
+                    SELECT
                         generate_series(0, %s-1) as y_bin_num,
                         min_val + (generate_series(0, %s-1) * bin_width) as y0,
                         min_val + (generate_series(1, %s) * bin_width) as y1
                     FROM (
-                        SELECT 
+                        SELECT
                             MIN(%s::numeric) as min_val,
                             MAX(%s::numeric) as max_val,
                             (MAX(%s::numeric) - MIN(%s::numeric)) / %s::numeric as bin_width
@@ -537,7 +955,7 @@ DB_FUNCTIONS = {
                     WHERE %s IS NOT NULL%s
                 ),
                 all_bins AS (
-                    SELECT 
+                    SELECT
                         xc.x_value,
                         ybr.y_bin_num,
                         ybr.y0,
@@ -546,18 +964,18 @@ DB_FUNCTIONS = {
                     CROSS JOIN y_bin_ranges ybr
                 ),
                 data_with_bins AS (
-                    SELECT 
+                    SELECT
                         m."ID",
                         ab.x_value,
                         ab.y_bin_num
                     FROM %I m
-                    JOIN all_bins ab ON 
+                    JOIN all_bins ab ON
                         m.%s = ab.x_value AND
                         m.%s::numeric >= ab.y0 AND m.%s::numeric < ab.y1
                     WHERE m.%s IS NOT NULL AND m.%s IS NOT NULL%s
                 ),
                 binned_counts AS (
-                    SELECT 
+                    SELECT
                         x_value,
                         y_bin_num,
                         COUNT(*) as item_count
@@ -565,7 +983,7 @@ DB_FUNCTIONS = {
                     GROUP BY x_value, y_bin_num
                 ),
                 error_counts AS (
-                    SELECT 
+                    SELECT
                         dwb.x_value,
                         dwb.y_bin_num,
                         e.error_type,
@@ -576,19 +994,19 @@ DB_FUNCTIONS = {
                     GROUP BY dwb.x_value, dwb.y_bin_num, e.error_type
                 ),
                 final_bins AS (
-                    SELECT 
+                    SELECT
                         bc.x_value,
                         bc.y_bin_num,
                         bc.item_count,
-                        CASE 
-                            WHEN error_agg.error_json IS NULL THEN 
+                        CASE
+                            WHEN error_agg.error_json IS NULL THEN
                                 json_build_object(''items'', bc.item_count)
-                            ELSE 
+                            ELSE
                                 (error_agg.error_json::jsonb || json_build_object(''items'', bc.item_count)::jsonb)::json
                         END as count_obj
                     FROM binned_counts bc
                     LEFT JOIN (
-                        SELECT 
+                        SELECT
                             x_value,
                             y_bin_num,
                             json_object_agg(error_type, error_count) as error_json
@@ -629,7 +1047,7 @@ DB_FUNCTIONS = {
                 main_table_name, quoted_x_column, quoted_y_column, quoted_y_column, quoted_x_column, quoted_y_column, id_filter,
                 error_table_name, x_axis_column, y_axis_column
             ) INTO result;
-            
+
         ELSE
             -- Both categorical
             EXECUTE format('
@@ -653,28 +1071,28 @@ DB_FUNCTIONS = {
                     )
                 )
                 FROM (
-                    SELECT 
+                    SELECT
                         m.x_value,
                         m.y_value,
-                        CASE 
-                            WHEN error_counts IS NULL THEN 
+                        CASE
+                            WHEN error_counts IS NULL THEN
                                 json_build_object(''items'', item_count)
-                            ELSE 
+                            ELSE
                                 (error_counts::jsonb || json_build_object(''items'', item_count)::jsonb)::json
                         END as count_obj
                     FROM (
                         SELECT %s as x_value, %s as y_value, COUNT(*) as item_count
-                        FROM %I 
+                        FROM %I
                         WHERE %s IS NOT NULL AND %s IS NOT NULL%s
                         GROUP BY %s, %s
                     ) m
                     LEFT JOIN (
-                        SELECT 
+                        SELECT
                             x_main_val,
                             y_main_val,
                             json_object_agg(error_type, error_count)::json as error_counts
                         FROM (
-                            SELECT 
+                            SELECT
                                 m2.%s as x_main_val,
                                 m2.%s as y_main_val,
                                 e.error_type,
@@ -691,42 +1109,9 @@ DB_FUNCTIONS = {
                 quoted_x_column, quoted_y_column, main_table_name, error_table_name, x_axis_column, y_axis_column, error_id_filter, quoted_x_column, quoted_y_column
             ) INTO result;
         END IF;
-        
+
         RETURN result;
     END;
-    $FUNC$; 
-    """,
-
-    # Add more functions here as needed
-    # "another_function_name": """CREATE OR REPLACE FUNCTION...""",
+    $FUNC$;
+    """
 }
-
-
-def initialize_database_functions(engine):
-    """
-    Create all custom database functions on startup
-    """
-    logger.info("Initializing database functions...")
-
-    try:
-        with engine.connect() as conn:
-            # Begin a transaction
-            trans = conn.begin()
-
-            for func_name, func_sql in DB_FUNCTIONS.items():
-                try:
-                    logger.info(f"Creating function: {func_name}")
-                    conn.execute(text(func_sql))
-                    logger.info(f"Successfully created function: {func_name}")
-                except Exception as e:
-                    logger.error(f"Failed to create function {func_name}: {str(e)}")
-                    trans.rollback()
-                    raise
-
-            # Commit all functions
-            trans.commit()
-            logger.info("All database functions initialized successfully!")
-
-    except Exception as e:
-        logger.error(f"Database function initialization failed: {str(e)}")
-        raise

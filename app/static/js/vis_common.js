@@ -130,10 +130,12 @@ function createHybridScales(size, numHistData, catHistData, numDomain, catDomain
     }
 
     function apply( val, type ){
-        if( type === "numeric" && scaleNum !== null ) 
+        if( type === "numeric" && scaleNum !== null )
             return scaleNum(val);
-        if( type === "categorical" && scaleCat !== null )
-            return scaleCat(val);
+        if( type === "categorical" && scaleCat !== null ) {
+            // Return the center of the band for better point positioning
+            return scaleCat(val) + scaleCat.bandwidth() / 2;
+        }
         console.warn("No scale available for type:", type, val);
         return null;
     }
