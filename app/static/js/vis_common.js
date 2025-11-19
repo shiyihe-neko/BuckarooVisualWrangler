@@ -129,12 +129,13 @@ function createHybridScales(size, numHistData, catHistData, numDomain, catDomain
         }
     }
 
-    function apply( val, type ){
+    function apply( val, type, centerBand = false ){
         if( type === "numeric" && scaleNum !== null )
             return scaleNum(val);
         if( type === "categorical" && scaleCat !== null ) {
-            // Return the center of the band for better point positioning
-            return scaleCat(val) + scaleCat.bandwidth() / 2;
+            const basePos = scaleCat(val);
+            // Return the center of the band for point positioning, or edge for rectangles
+            return centerBand ? basePos + scaleCat.bandwidth() / 2 : basePos;
         }
         console.warn("No scale available for type:", type, val);
         return null;

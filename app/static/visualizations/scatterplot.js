@@ -68,8 +68,8 @@ export async function draw(model, view, canvas, givenData, xCol, yCol) {
         const circles = canvas.selectAll("circle")
             .data(sampleData.data)
             .join("circle")
-            .attr("cx", d => xScale.apply(d.x, d.xType))
-            .attr("cy", d => yScale.apply(d.y, d.yType))
+            .attr("cx", d => xScale.apply(d.x, d.xType, true))
+            .attr("cy", d => yScale.apply(d.y, d.yType, true))
             .attr("r", 4)
             .attr("fill", circleFillFunc)
 
