@@ -139,11 +139,12 @@ async function queryHistogram2d(columnX,columnY,tableName,minId,maxID,bins) {
  * @param totalSamples
  * @returns {Promise<any>}
  */
-export async function querySample2d(xColumn, yColumn, minId, maxId, errorSamples, totalSamples) {
+export async function querySample2d(xColumn, yColumn, tableName, minId, maxId, errorSamples, totalSamples) {
     console.log("2d sample fetch");
     const params = new URLSearchParams({
         x_column:xColumn,
         y_column:yColumn,
+        tablename:tableName,
         min_id:minId,
         max_id:maxId,
         error_sample_count:errorSamples,

@@ -30,7 +30,7 @@ export async function draw(model, view, canvas, givenData, xCol, yCol) {
 
     let sampleData;
     try {
-        let response = await querySample2d(xCol, yCol, model.getSampleIDRangeMin(), model.getSampleIDRangeMax(), errorSampleCount, totalSampleCount)
+        let response = await querySample2d(xCol, yCol, model.originalFilename, model.getSampleIDRangeMin(), model.getSampleIDRangeMax(), errorSampleCount, totalSampleCount)
         sampleData = response["scatterplot_data"]
         // console.log("sampleData",sampleData)
 
