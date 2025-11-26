@@ -381,6 +381,7 @@ DB_FUNCTIONS = {
     "generate_scatterplot_with_errors": """
     -- Generate scatterplot data with intelligent sampling
     -- Prioritizes rows with errors, then fills with random clean rows
+    -- Simplified version: 4 CTEs instead of 10, fewer table scans
     CREATE OR REPLACE FUNCTION generate_scatterplot_with_errors(
         main_table_name text,
         error_table_name text,
@@ -412,148 +413,129 @@ DB_FUNCTIONS = {
         -- Build scatterplot with intelligent sampling
         EXECUTE format($QUERY$
             WITH
-            -- Step 1: Get all IDs that have errors in x or y columns (only IDs that exist in main table)
-            error_ids AS (
-                SELECT DISTINCT e.row_id
-                FROM %I e
-                INNER JOIN %I m ON e.row_id = m."ID"
-                WHERE e.column_id IN ($1, $2)
-                  AND ($3 IS NULL OR e.row_id >= $3)
-                  AND ($4 IS NULL OR e.row_id <= $4)
-            ),
-            -- Step 2: Sample error rows (prioritize errors, randomly sample if too many)
-            sampled_errors AS (
-                SELECT row_id
-                FROM error_ids
-                ORDER BY RANDOM()
-                LIMIT $5
-            ),
-            -- Step 3: Sample clean rows (fill remaining quota)
-            sampled_clean AS (
-                SELECT "ID" as row_id
-                FROM %I
-                WHERE ($3 IS NULL OR "ID" >= $3)
-                  AND ($4 IS NULL OR "ID" <= $4)
-                  AND "ID" NOT IN (SELECT row_id FROM error_ids)
-                ORDER BY RANDOM()
-                LIMIT GREATEST($6 - (SELECT COUNT(*) FROM sampled_errors), 0)
-            ),
-            -- Step 4: Combine sampled IDs
+            -- Step 1: Sample IDs (prioritize errors, then clean rows)
             all_sampled_ids AS (
-                SELECT row_id FROM sampled_errors
+                (
+                    -- Sample error rows
+                    SELECT e.row_id
+                    FROM %I e
+                    WHERE e.column_id IN ($1, $2)
+                      AND ($3 IS NULL OR e.row_id >= $3)
+                      AND ($4 IS NULL OR e.row_id <= $4)
+                    ORDER BY RANDOM()
+                    LIMIT $5
+                )
                 UNION ALL
-                SELECT row_id FROM sampled_clean
+                (
+                    -- Sample clean rows to fill quota
+                    SELECT "ID" as row_id
+                    FROM %I
+                    WHERE ($3 IS NULL OR "ID" >= $3)
+                      AND ($4 IS NULL OR "ID" <= $4)
+                      AND "ID" NOT IN (
+                          SELECT DISTINCT row_id
+                          FROM %I
+                          WHERE column_id IN ($1, $2)
+                            AND ($3 IS NULL OR row_id >= $3)
+                            AND ($4 IS NULL OR row_id <= $4)
+                      )
+                    ORDER BY RANDOM()
+                    LIMIT GREATEST($6 - $5, 0)
+                )
             ),
-            -- Step 5: Get data for sampled IDs
+            -- Step 2: Get data for sampled IDs with error aggregation
             sampled_data AS (
                 SELECT
-                    s.row_id as "ID",
+                    m."ID",
                     m.%I as x_value,
-                    m.%I as y_value
+                    m.%I as y_value,
+                    COALESCE(
+                        json_agg(e.error_type) FILTER (WHERE e.error_type IS NOT NULL),
+                        '[]'::json
+                    ) as error_list
                 FROM all_sampled_ids s
                 JOIN %I m ON s.row_id = m."ID"
+                LEFT JOIN %I e ON s.row_id = e.row_id AND e.column_id IN ($1, $2)
+                GROUP BY m."ID", m.%I, m.%I
             ),
-            -- Step 6: Aggregate errors per row
-            errors_per_row AS (
+            -- Step 3: Pre-compute numeric bounds for X axis
+            x_bounds AS (
                 SELECT
-                    s.row_id,
-                    COALESCE(json_agg(e.error_type) FILTER (WHERE e.error_type IS NOT NULL), '[]'::json) as error_list
-                FROM all_sampled_ids s
-                LEFT JOIN %I e ON s.row_id = e.row_id
-                  AND e.column_id IN ($1, $2)
-                GROUP BY s.row_id
+                    MIN(x_value::numeric) as min_val,
+                    MAX(x_value::numeric) as max_val
+                FROM sampled_data
+                WHERE $7  -- only for numeric columns
             ),
-            -- Step 7: Build data entries
-            data_entries AS (
-                SELECT json_build_object(
-                    'ID', d."ID",
-                    'xType', CASE WHEN $7 THEN 'numeric' ELSE 'categorical' END,
-                    'yType', CASE WHEN $8 THEN 'numeric' ELSE 'categorical' END,
-                    'x', CASE
-                        WHEN d.x_value IS NULL THEN to_json('null'::text)
-                        WHEN $7 THEN to_json(d.x_value::numeric)
-                        ELSE to_json(d.x_value::text)
-                    END,
-                    'y', CASE
-                        WHEN d.y_value IS NULL THEN to_json('null'::text)
-                        WHEN $8 THEN to_json(d.y_value::numeric)
-                        ELSE to_json(d.y_value::text)
-                    END,
-                    'errors', COALESCE(e.error_list, '[]'::json)
-                ) as entry
-                FROM sampled_data d
-                LEFT JOIN errors_per_row e ON d."ID" = e.row_id
-            ),
-            -- Step 8: Build scale data for X axis
-            x_scale AS (
-                SELECT json_build_object(
+            -- Step 4: Pre-compute numeric bounds for Y axis
+            y_bounds AS (
+                SELECT
+                    MIN(y_value::numeric) as min_val,
+                    MAX(y_value::numeric) as max_val
+                FROM sampled_data
+                WHERE $8  -- only for numeric columns
+            )
+            -- Step 5: Build final result
+            SELECT json_build_object(
+                'data', (
+                    SELECT COALESCE(json_agg(
+                        json_build_object(
+                            'ID', "ID",
+                            'xType', CASE WHEN $7 THEN 'numeric' ELSE 'categorical' END,
+                            'yType', CASE WHEN $8 THEN 'numeric' ELSE 'categorical' END,
+                            'x', CASE
+                                WHEN x_value IS NULL THEN to_json('null'::text)
+                                WHEN $7 THEN to_json(x_value::numeric)
+                                ELSE to_json(x_value::text)
+                            END,
+                            'y', CASE
+                                WHEN y_value IS NULL THEN to_json('null'::text)
+                                WHEN $8 THEN to_json(y_value::numeric)
+                                ELSE to_json(y_value::text)
+                            END,
+                            'errors', error_list
+                        )
+                    ), '[]'::json)
+                    FROM sampled_data
+                ),
+                'scaleX', json_build_object(
                     'numeric', CASE WHEN $7 THEN
                         json_build_array(
-                            (SELECT COALESCE(MIN(%I::numeric), 0) FROM %I WHERE ($3 IS NULL OR "ID" >= $3) AND ($4 IS NULL OR "ID" <= $4)),
-                            (SELECT COALESCE(MAX(%I::numeric), 1) + 1 FROM %I WHERE ($3 IS NULL OR "ID" >= $3) AND ($4 IS NULL OR "ID" <= $4))
+                            (SELECT COALESCE(min_val, 0) FROM x_bounds),
+                            (SELECT COALESCE(max_val, 1) + 1 FROM x_bounds)
                         )
                     ELSE '[]'::json END,
                     'categorical', CASE WHEN NOT $7 THEN
                         (SELECT COALESCE(
-                            json_agg(DISTINCT val ORDER BY val),
+                            json_agg(DISTINCT x_value::text ORDER BY x_value::text),
                             '[]'::json
-                        ) FROM (
-                            SELECT COALESCE(%I::text, 'null') as val
-                            FROM %I
-                            WHERE ($3 IS NULL OR "ID" >= $3)
-                              AND ($4 IS NULL OR "ID" <= $4)
-                        ) sub)
+                        ) FROM sampled_data)
                     ELSE '[]'::json END
-                ) as x_scale_obj
-            ),
-            -- Step 9: Build scale data for Y axis
-            y_scale AS (
-                SELECT json_build_object(
+                ),
+                'scaleY', json_build_object(
                     'numeric', CASE WHEN $8 THEN
                         json_build_array(
-                            (SELECT COALESCE(MIN(%I::numeric), 0) FROM %I WHERE ($3 IS NULL OR "ID" >= $3) AND ($4 IS NULL OR "ID" <= $4)),
-                            (SELECT COALESCE(MAX(%I::numeric), 1) + 1 FROM %I WHERE ($3 IS NULL OR "ID" >= $3) AND ($4 IS NULL OR "ID" <= $4))
+                            (SELECT COALESCE(min_val, 0) FROM y_bounds),
+                            (SELECT COALESCE(max_val, 1) + 1 FROM y_bounds)
                         )
                     ELSE '[]'::json END,
                     'categorical', CASE WHEN NOT $8 THEN
                         (SELECT COALESCE(
-                            json_agg(DISTINCT val ORDER BY val),
+                            json_agg(DISTINCT y_value::text ORDER BY y_value::text),
                             '[]'::json
-                        ) FROM (
-                            SELECT COALESCE(%I::text, 'null') as val
-                            FROM %I
-                            WHERE ($3 IS NULL OR "ID" >= $3)
-                              AND ($4 IS NULL OR "ID" <= $4)
-                        ) sub)
+                        ) FROM sampled_data)
                     ELSE '[]'::json END
-                ) as y_scale_obj
-            )
-            -- Step 10: Combine everything into final result
-            SELECT json_build_object(
-                'data', (SELECT COALESCE(json_agg(entry), '[]'::json) FROM data_entries),
-                'scaleX', (SELECT x_scale_obj FROM x_scale),
-                'scaleY', (SELECT y_scale_obj FROM y_scale)
+                )
             )
         $QUERY$,
-            error_table_name,       -- %I: error table for error_ids
-            main_table_name,        -- %I: main table for error_ids JOIN
-            main_table_name,        -- %I: main table for sampled_clean
-            x_axis_column,          -- %I: x column in sampled_data
-            y_axis_column,          -- %I: y column in sampled_data
-            main_table_name,        -- %I: main table for sampled_data join
-            error_table_name,       -- %I: error table for errors_per_row
-            x_axis_column,          -- %I: x column for x_scale min
-            main_table_name,        -- %I: main table for x_scale min
-            x_axis_column,          -- %I: x column for x_scale max
-            main_table_name,        -- %I: main table for x_scale max
-            x_axis_column,          -- %I: x column for x_scale categorical
-            main_table_name,        -- %I: main table for x_scale categorical
-            y_axis_column,          -- %I: y column for y_scale min
-            main_table_name,        -- %I: main table for y_scale min
-            y_axis_column,          -- %I: y column for y_scale max
-            main_table_name,        -- %I: main table for y_scale max
-            y_axis_column,          -- %I: y column for y_scale categorical
-            main_table_name         -- %I: main table for y_scale categorical
+            error_table_name,       -- %I: error table for sampling
+            main_table_name,        -- %I: main table for clean sampling
+            error_table_name,       -- %I: error table for NOT IN subquery
+            x_axis_column,          -- %I: x column
+            y_axis_column,          -- %I: y column
+            main_table_name,        -- %I: main table for data join
+            error_table_name,       -- %I: error table for error aggregation
+            x_axis_column,          -- %I: x column in GROUP BY
+            y_axis_column           -- %I: y column in GROUP BY
         )
         USING x_axis_column, y_axis_column, min_id, max_id, error_sample_size, total_sample_size, x_is_numeric, y_is_numeric
         INTO result;
