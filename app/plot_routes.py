@@ -29,6 +29,11 @@ from app.service_helpers import clean_table_name
 # True  = Use pandas with data_state_manager (legacy, for testing)
 USE_PANDAS_FOR_HISTOGRAMS = False
 
+# Toggle between pandas (in-memory) and PostgreSQL (database) scatterplot generation
+# False = Use PostgreSQL stored procedures with database tables (recommended)
+# True  = Use pandas with data_state_manager (legacy, for testing)
+USE_PANDAS_FOR_SCATTERPLOT = False
+
 @app.get("/api/plots/1-d-histogram")
 def get_1d_histogram():
     """
@@ -179,6 +184,7 @@ def get_2d_histogram_pandas():
 
 @app.get("/api/plots/scatterplot")
 def get_scatterplot_data():
+    table = clean_table_name(request.args.get("tablename"))
     x_column_name = request.args.get("x_column")
     y_column_name = request.args.get("y_column")
     min_id = request.args.get("min_id", default=0)
@@ -187,7 +193,13 @@ def get_scatterplot_data():
     total_sample_count = request.args.get("total_sample_count", default=100)
 
     try:
-        scatterplot_data = generate_scatterplot_sample_data(x_column_name, y_column_name, int(min_id), int(max_id), int(error_sample_count), int(total_sample_count))
+        if USE_PANDAS_FOR_SCATTERPLOT:
+            scatterplot_data = generate_scatterplot_sample_data(x_column_name, y_column_name, int(min_id), int(max_id), int(error_sample_count), int(total_sample_count))
+        else:
+            query = f"SELECT generate_scatterplot_with_errors('{table}', 'errors{table}', '{x_column_name}', '{y_column_name}', {error_sample_count}, {total_sample_count}, {min_id}, {max_id});"
+            result = pd.read_sql_query(query, engine).to_dict()
+            scatterplot_data = result["generate_scatterplot_with_errors"][0]
+
         return {"Success": True, "scatterplot_data": scatterplot_data}
     except Exception as e:
         return {"Success": False, "Error": str(e)}

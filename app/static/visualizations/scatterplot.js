@@ -30,7 +30,7 @@ export async function draw(model, view, canvas, givenData, xCol, yCol) {
 
     let sampleData;
     try {
-        let response = await querySample2d(xCol, yCol, model.getSampleIDRangeMin(), model.getSampleIDRangeMax(), errorSampleCount, totalSampleCount)
+        let response = await querySample2d(xCol, yCol, model.originalFilename, model.getSampleIDRangeMin(), model.getSampleIDRangeMax(), errorSampleCount, totalSampleCount)
         sampleData = response["scatterplot_data"]
         // console.log("sampleData",sampleData)
 
@@ -68,8 +68,8 @@ export async function draw(model, view, canvas, givenData, xCol, yCol) {
         const circles = canvas.selectAll("circle")
             .data(sampleData.data)
             .join("circle")
-            .attr("cx", d => xScale.apply(d.x, d.xType))
-            .attr("cy", d => yScale.apply(d.y, d.yType))
+            .attr("cx", d => xScale.apply(d.x, d.xType, true))
+            .attr("cy", d => yScale.apply(d.y, d.yType, true))
             .attr("r", 4)
             .attr("fill", circleFillFunc)
 
