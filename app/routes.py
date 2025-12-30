@@ -9,7 +9,7 @@ import time
 from app import app
 from app import connection, engine
 from app.service_helpers import clean_table_name, get_whole_table_query, run_detectors, create_error_dict, \
-    init_session_data_state, fetch_detected_and_undetected_current_dataset_from_db
+    init_session_data_state, fetch_detected_and_undetected_current_dataset_from_db, calculate_attribute_rankings
 from app import data_state_manager
 from app.set_id_column import set_id_column
 import json
@@ -39,8 +39,16 @@ def upload_csv():
         #insert the undetected dataframe
         rows_inserted = table_with_id_added.to_sql(cleaned_table_name, engine, if_exists='replace')
         detected_rows_inserted = detected_data.to_sql("errors"+cleaned_table_name, engine, if_exists='replace')
-        return{"success": True, "rows for undetected data": rows_inserted, "rows_for_detected": detected_rows_inserted, "clean_table_name": cleaned_table_name}
+
+        # Calculate and store attribute rankings
+        rankings = calculate_attribute_rankings(detected_data)
+        rankings.to_sql("rankings"+cleaned_table_name, engine, if_exists='replace', index=False)
+
+        return{"success": True, "rows for undetected data": rows_inserted, "rows_for_detected": detected_rows_inserted, "clean_table_name": cleaned_table_name, "new_table_name": cleaned_table_name}
     except Exception as e:
+        print(f"Error in upload: {e}")
+        import traceback
+        traceback.print_exc()
         return {"success": False, "error": str(e)}
 
 @app.get("/api/get-sample")
