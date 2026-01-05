@@ -308,7 +308,6 @@ async function attachButtonEventListeners(controller){
             });
 
             const data = await response.json();
-            console.log(data['new_table_name'])
             localStorage.setItem("table", data['new_table_name'])
             window.location.reload()
         }

@@ -50,7 +50,10 @@ class AttributeSummaryView {
 
         const sortedAttributes = this.sortAttributes(summaryData.attributes, summaryData.columnErrors);
 
-        this.selectedAttributes = sortedAttributes.slice(0, 3);  // Default to first 3 attributes
+        // Use server-provided defaults if available, fallback to sorted slice
+        this.selectedAttributes = summaryData.defaultAttributes && summaryData.defaultAttributes.length > 0
+            ? summaryData.defaultAttributes
+            : sortedAttributes.slice(0, 3);
         controller.updateGrouping(this.selectedAttributes, this.groupByAttribute)
 
 

@@ -155,6 +155,22 @@ def run_detectors(data_frame):
     frames = [anomaly_df, incomplete_df, missing_value_df,datatype_mismatch_df]
     return perform_melt(frames)
 
+def calculate_attribute_rankings(error_df):
+    """
+    Calculate attribute rankings by total error count
+    :param error_df: Melted error DataFrame with columns {row_id, column_id, error_type}
+    :return: DataFrame with columns [attribute, total_errors, rank] sorted by total_errors descending
+    """
+    if error_df.empty:
+        return pd.DataFrame(columns=['attribute', 'total_errors', 'rank'])
+
+    ranking = error_df.groupby('column_id').size().reset_index(name='total_errors')
+    ranking = ranking.sort_values('total_errors', ascending=False)
+    ranking['rank'] = range(1, len(ranking) + 1)
+    ranking = ranking.rename(columns={'column_id': 'attribute'})
+
+    return ranking[['attribute', 'total_errors', 'rank']]
+
 def get_error_dist(error_df,normal_df):
     """
     Gets the distribution of errors in the error dataframe, this is used to create a pivot table, and also in the attribute summaries

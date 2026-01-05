@@ -169,7 +169,9 @@ export async function querySample2d(xColumn, yColumn, tableName, minId, maxId, e
 export async function queryAttributeSummaries(minId, maxId) {
     const params = new URLSearchParams({
         min_id:minId,
-        max_id:maxId,});
+        max_id:maxId,
+        tablename: localStorage.getItem("table") || ""
+    });
 
     const url = `/api/plots/summaries?${params}`
     try{

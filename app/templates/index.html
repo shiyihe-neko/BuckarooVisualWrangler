@@ -160,8 +160,13 @@
                 const maxId = document.getElementById("max-id").value;
                 storeDataRangeValues(minId, maxId);
 
+                // Extract just the filename and clean it for table name
+                const justFilename = filename.substring(filename.lastIndexOf('/') + 1);
+                const tableName = justFilename.replace(/\.csv$/, '').replace(/[^a-zA-Z0-9_]/g, '_');
+
                 localStorage.setItem("userUploaded","no");
                 localStorage.setItem("selectedSample",filename);
+                localStorage.setItem("table", tableName);
               window.location.href = "{{ url_for('data_cleaning_vis_tool') }}";
             }
 
@@ -185,9 +190,11 @@
                         throw new Error(`Response status: ${response.status}`);
                     }
                     if (response.statusText === "OK") {
+                        const data = await response.json();
                         /** Add a way to tell the user that the csv was uploaded successfully*/
                         localStorage.setItem("userUploaded", "yes");
-                        localStorage.setItem("selectedSample", uploadedFile['name'])
+                        localStorage.setItem("selectedSample", uploadedFile['name']);
+                        localStorage.setItem("table", data['new_table_name']);
                         window.location.href = "{{ url_for('data_cleaning_vis_tool') }}";
                     }
                 } catch (error) {
