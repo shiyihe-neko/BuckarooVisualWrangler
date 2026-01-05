@@ -26,11 +26,15 @@ class SelectionControlPanel {
 
                 this.errorColors = d3.scaleOrdinal()
                                 .domain(Object.keys(this.errorTypes))
-                                .range(["#00000000", "saddlebrown", "hotpink", "red", "gray", "steelblue"]);     
+                                .range(["#00000000", "saddlebrown", "hotpink", "red", "gray", "steelblue"]);
         // this.errorColors = null
 
-        document.getElementById("repairButton").addEventListener("click", () => {
-            this.plotRepairPanel();
+        // Use event delegation on document to handle clicks
+        document.addEventListener("click", (e) => {
+            if (e.target.id === "repairButton" || e.target.closest("#repairButton")) {
+                console.log("Repair button clicked!");
+                this.plotRepairPanel();
+            }
         });
         document.getElementById("zoomButton").addEventListener("click", () => {
             console.log("Zoom Selection clicked");
@@ -70,8 +74,9 @@ class SelectionControlPanel {
 
         const size = 200;
 
-
-        console.log("Plotting repair panel");
+        console.log("=== plotRepairPanel called ===");
+        console.log("Current selection:", this.currentSelection);
+        console.log("View type:", this.selectViewType);
         // const toolboxObject = document.getElementsByClassName("toolbox-wrapper")[0];
         // toolboxObject.style.display = "flex"; // Show the toolbox if it was hidden
         
@@ -91,8 +96,15 @@ class SelectionControlPanel {
         repair_methods.forEach(method => {
             const div = preview_area
                             .append("div")
-                            .attr("class", "repair-method")
-                            .html(`<strong>${method.name}</strong> [ Apply ]<br>`);
+                            .attr("class", "repair-method");
+
+            div.append("strong").text(method.name);
+            div.append("span")
+                .text(" [ Apply ]")
+                .style("cursor", "pointer")
+                .style("color", "#4CAF50")
+                .on("click", () => this.applyRepair(method.name));
+            div.append("br");
 
             const plotSize = Math.min(size - this.leftMargin - this.rightMargin, size - this.topMargin - this.bottomMargin);
             const svg = div
@@ -107,14 +119,47 @@ class SelectionControlPanel {
 
             if( this.selectViewType === "barchart" ){
                 visualizations['barchart'].module.draw(this.viewParameters[0], view, canvas, ...this.viewParameters.slice(3),true);
-            } 
-            else if (this.selectViewType === "scatterplot") {  
+            }
+            else if (this.selectViewType === "scatterplot") {
                 visualizations['scatterplot'].module.draw(this.viewParameters[0], view, canvas, ...this.viewParameters.slice(3));
             } else if (this.selectViewType === "heatmap") {
                 visualizations['heatmap'].module.draw(this.viewParameters[0], view, canvas, ...this.viewParameters.slice(3));
             }
         });
 
+    }
+
+    async applyRepair(methodName) {
+        const table = localStorage.getItem("selectedSample")?.split('/').pop().replace('.csv', '');
+
+        try {
+            const cols = [this.viewParameters[4], this.viewParameters[5]];
+            const isRemove = methodName === "Remove Data";
+            const endpoint = isRemove ? "/api/wrangle/remove" : "/api/wrangle/impute";
+
+            const payload = { currentSelection: this.currentSelection, cols: cols, table: table };
+            if (!isRemove) {
+                payload.col = methodName === "Impute Mean X" ? cols[0] : cols[1];
+            }
+
+            const response = await fetch(endpoint, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                alert("Error: " + (data?.error || `Server error ${response.status}`));
+                return;
+            }
+
+            window.location.reload();
+        } catch (error) {
+            console.error(error);
+            alert("Error: " + error.message);
+        }
     }
 }
 

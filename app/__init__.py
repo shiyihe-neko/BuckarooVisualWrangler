@@ -92,6 +92,6 @@ from app.db_functions import initialize_database_functions
 initialize_database_functions(engine)
 
 from app import routes
-from app import wrangler_routes
+from app import wrangler_routes_sql as wrangler_routes
 from app import plot_routes
 #manages the different data instances of the data during the users session
