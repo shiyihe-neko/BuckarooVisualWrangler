@@ -8,38 +8,36 @@
 </head>
 <body>
     <div class="container">
-        <h1>🤠 实验管理后台 (Admin Console)</h1>
+        <h1>🤠 Admin Console</h1>
         <hr>
         
         <div class="row">
-            <!-- 卡片 1: Chicago Crimes -->
             <div class="col-md-4">
                 <div class="card p-3">
-                    <h3>Chicago Crimes</h3>
-                    <!-- 请确认这里的文件名和你 provided_datasets 里的一样 -->
-                    <p class="text-muted">Filename: crimes.csv</p> 
-                    <button class="btn btn-success mb-2" onclick="download('crimes.csv')">⬇️ 下载数据 (Download)</button>
-                    <button class="btn btn-danger" onclick="reset('crimes.csv')">⚠️ 重置实验 (Reset)</button>
+                    <h3>>StackOverflow Survey</h3>
+                    <p class="text-muted">Filename: stackoverflow_db_uncleaned.csv</p> 
+                    <button class="btn btn-success mb-2" onclick="download('stackoverflow_db_uncleaned.csv')">⬇️ Download</button>
+                    <button class="btn btn-danger" onclick="reset('stackoverflow_db_uncleaned.csv')">⚠️ Reset</button>
                 </div>
             </div>
 
-            <!-- 卡片 2: StackOverflow -->
+
             <div class="col-md-4">
                 <div class="card p-3">
-                    <h3>StackOverflow</h3>
-                    <p class="text-muted">Filename: stackoverflow_db_uncleaned.csv</p>
-                    <button class="btn btn-success mb-2" onclick="download('stackoverflow_db_uncleaned.csv')">⬇️ 下载数据</button>
-                    <button class="btn btn-danger" onclick="reset('stackoverflow_db_uncleaned.csv')">⚠️ 重置实验</button>
+                    <h3>Cars</h3>
+                    <p class="text-muted">Filename: cars.csv</p>
+                    <button class="btn btn-success mb-2" onclick="download('cars.csv')">⬇️ Download</button>
+                    <button class="btn btn-danger" onclick="reset('cars.csv')">⚠️ Reset</button>
                 </div>
             </div>
 
             <!-- 卡片 3: Complaints -->
             <div class="col-md-4">
                 <div class="card p-3">
-                    <h3>Complaints</h3>
-                    <p class="text-muted">Filename: complaints.csv</p>
-                    <button class="btn btn-success mb-2" onclick="download('complaints.csv')">⬇️ 下载数据</button>
-                    <button class="btn btn-danger" onclick="reset('complaints.csv')">⚠️ 重置实验</button>
+                    <h3>Games</h3>
+                    <p class="text-muted">Filename: games.csv</p>
+                    <button class="btn btn-success mb-2" onclick="download('games.csv')">⬇️ Download</button>
+                    <button class="btn btn-danger" onclick="reset('games.csv')">⚠️ Reset</button>
                 </div>
             </div>
         </div>
@@ -50,12 +48,12 @@
             window.location.href = `/api/admin/download_table?table=${filename}`;
         }
         async function reset(filename) {
-            if(!confirm(`确定要重置 ${filename} 吗？\n当前的所有修改都将丢失！`)) return;
+            if(!confirm(`Are you sure you want to reset ${filename}?\nAll current modifications will be lost!`)) return;
             try {
                 let res = await fetch(`/api/admin/reset_dataset?filename=${filename}`);
                 let data = await res.json();
-                alert(data.success ? "✅ 重置成功！" : "❌ 失败: " + data.error);
-            } catch(e) { alert("网络错误"); }
+                alert(data.success ? "✅ Reset successful!" : "❌ Failed: " + data.error);
+            } catch(e) { alert("Network error"); }
         }
     </script>
 </body>
