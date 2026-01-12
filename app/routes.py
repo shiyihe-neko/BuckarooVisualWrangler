@@ -1,9 +1,10 @@
-# Buckaroo Project - Final Stable Version
+# Buckaroo Project - Final Stable Version (Memory Optimized)
 import numpy as np
 import pandas as pd
 from flask import request, render_template, send_from_directory, Response
 import os
 import time
+import gc
 from app import app
 from app import connection, engine
 from app.service_helpers import clean_table_name, get_whole_table_query, run_detectors, create_error_dict, \
@@ -13,49 +14,48 @@ from app.set_id_column import set_id_column
 import json
 from sqlalchemy import inspect, text
 
-# --- 核心优化：大块慢速写入 (减少 SSL 握手次数) ---
+# --- CORE OPTIMIZATION: Safe Chunked Write ---
 def safe_write_to_db_with_sleep(df, table_name, engine, chunk_size=2000):
     """
-    策略调整：
-    增大 Chunk (2000) = 减少网络请求次数 = 减少 SSL 报错概率
-    增加 Sleep (1.0s) = 给数据库充足的 I/O 缓冲时间
+    Strategy:
+    Larger Chunk (2000) = Fewer network requests = Fewer SSL handshake errors
+    Sleep (1.0s) = Give the database I/O buffer time to clear
     """
     total_rows = len(df)
-    print(f"🚀 Starting SAFE WRITE for {table_name}: {total_rows} rows...")
+    print(f"[START] Safe write for {table_name}: {total_rows} rows...")
     
-    # 获取迭代器，不一次性加载到内存
-    # 第一次写入 (Replace)
     try:
+        # Write first chunk (Replace mode to create table)
         first_chunk = df.iloc[0:chunk_size]
         use_index = "rankings" not in table_name
         first_chunk.to_sql(table_name, engine, if_exists='replace', index=use_index)
-        print(f"   Written first {chunk_size} rows...")
-        time.sleep(1) # 休息 1 秒
+        print(f"   [WRITE] Initialized table with first {len(first_chunk)} rows...")
+        time.sleep(1) # Sleep to prevent connection reset
         
-        # 后续写入 (Append)
+        # Write remaining chunks (Append mode)
         for i in range(chunk_size, total_rows, chunk_size):
             chunk = df.iloc[i : i + chunk_size]
             chunk.to_sql(table_name, engine, if_exists='append', index=use_index)
-            print(f"   Written chunk starting at {i}...")
-            time.sleep(1) # 每次写完休息 1 秒
+            print(f"   [WRITE] Chunk starting at row {i}...")
+            time.sleep(1) 
             
     except Exception as e:
-        print(f"❌ Write failed for {table_name}: {e}")
-        raise e # 抛出异常以便外层捕获
+        print(f"[ERROR] Write failed for {table_name}: {e}")
+        raise e 
 
-    print(f"🎉 Finished writing {table_name}!")
+    print(f"[SUCCESS] Finished writing {table_name}!")
 
-# --- 自动加载与修复逻辑 ---
+# --- Auto-Load and Self-Healing Logic (With Memory Cleanup) ---
 def initialize_dataset_if_needed(cleaned_table_name, original_filename):
     inspector = inspect(engine)
     has_main = inspector.has_table(cleaned_table_name)
     has_error = inspector.has_table("errors" + cleaned_table_name)
 
-    # 只要有任何一张表缺失，或者处于不一致状态，就重新加载
+    # If any table is missing, force a clean reload
     if not has_main or not has_error:
-        print(f"⚠️ Data mismatch for {cleaned_table_name}. Starting clean reload...")
+        print(f"[WARN] Data mismatch for {cleaned_table_name}. Starting clean reload...")
         
-        # 1. 先强制清理环境 (解决 relation does not exist 问题)
+        # 1. Force cleanup old tables
         try:
             with engine.connect() as conn:
                 trans = conn.begin()
@@ -63,11 +63,11 @@ def initialize_dataset_if_needed(cleaned_table_name, original_filename):
                 conn.execute(text(f'DROP TABLE IF EXISTS "errors{cleaned_table_name}" CASCADE;'))
                 conn.execute(text(f'DROP TABLE IF EXISTS "rankings{cleaned_table_name}" CASCADE;'))
                 trans.commit()
-            print("   Cleaned up old tables.")
+            print("   [CLEANUP] Old tables dropped.")
         except Exception as e:
-            print(f"   Cleanup warning: {e}")
+            print(f"   [CLEANUP ERROR] {e}")
 
-        # 2. 寻找文件
+        # 2. Locate CSV file
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
         paths = [
             os.path.join(base_dir, 'provided_datasets', original_filename),
@@ -77,30 +77,47 @@ def initialize_dataset_if_needed(cleaned_table_name, original_filename):
              
         if csv_path:
             try:
-                print(f"📖 Reading CSV: {original_filename}")
+                print(f"[READ] Reading CSV: {original_filename}")
                 df = pd.read_csv(csv_path)
                 
-                print("🔍 Running detectors...")
+                print("[PROCESS] Running detectors...")
                 df_with_id = set_id_column(df)
                 detected_data = run_detectors(df)
                 
-                # 3. 执行安全写入
+                # --- MEMORY CLEANUP 1: Remove raw df ---
+                del df
+                gc.collect()
+                print("[GC] Raw dataframe cleaned.")
+                
+                # 3. Execute Safe Write
                 safe_write_to_db_with_sleep(df_with_id, cleaned_table_name, engine)
+                
+                # --- MEMORY CLEANUP 2: Remove id dataframe ---
+                del df_with_id
+                gc.collect()
+                print("[GC] ID dataframe cleaned.")
+                
                 safe_write_to_db_with_sleep(detected_data, "errors" + cleaned_table_name, engine)
                 
                 rankings = calculate_attribute_rankings(detected_data)
                 rankings.to_sql("rankings" + cleaned_table_name, engine, if_exists='replace', index=False)
                 
-                print(f"✅ Successfully loaded {cleaned_table_name}")
+                # --- MEMORY CLEANUP 3: Final cleanup ---
+                del detected_data
+                del rankings
+                gc.collect()
+                print("[GC] Final cleanup done.")
+                
+                print(f"[DONE] Successfully loaded {cleaned_table_name}")
             except Exception as e:
-                print(f"❌ Failed to auto-load dataset: {e}")
-                # 再次清理，防止留下半成品
+                print(f"[FAIL] Failed to auto-load dataset: {e}")
+                # Cleanup partial data
                 with engine.connect() as conn:
                     conn.execute(text(f'DROP TABLE IF EXISTS "{cleaned_table_name}" CASCADE;'))
         else:
-            print(f"❌ CSV file not found: {original_filename}")
+            print(f"[ERROR] CSV file not found: {original_filename}")
 
-# --- 路由定义 ---
+# --- API Routes ---
 
 @app.post("/api/upload")
 def upload_csv():
@@ -117,13 +134,25 @@ def upload_csv():
         if not os.path.exists("report"): os.makedirs("report")
         json.dump({'db': cleaned_table_name, "clean_time": time_to_detect, "dataframe_shape": list(detected_data.shape)}, open(f"report/{cleaned_table_name}.json", "w"))
 
+        # --- MEMORY CLEANUP: Upload flow ---
+        del dataframe
+        gc.collect()
+
+        # Use safe write for uploads too
         safe_write_to_db_with_sleep(table_with_id_added, cleaned_table_name, engine)
+        del table_with_id_added
+        gc.collect()
+
         safe_write_to_db_with_sleep(detected_data, "errors"+cleaned_table_name, engine)
         
         rankings = calculate_attribute_rankings(detected_data)
         rankings.to_sql("rankings"+cleaned_table_name, engine, if_exists='replace', index=False)
+        
+        del detected_data
+        del rankings
+        gc.collect()
 
-        return{"success": True, "rows for undetected data": len(table_with_id_added), "clean_table_name": cleaned_table_name}
+        return{"success": True, "rows for undetected data": "inserted", "clean_table_name": cleaned_table_name}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -182,6 +211,10 @@ def reset_dataset():
             for table in [cleaned_name, "errors"+cleaned_name, "rankings"+cleaned_name]:
                 conn.execute(text(f'DROP TABLE IF EXISTS "{table}" CASCADE;'))
             trans.commit()
+        
+        # Trigger explicit GC after a reset operation
+        gc.collect()
+        
         return {"success": True, "message": f"Dataset {cleaned_name} reset."}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -194,41 +227,24 @@ def download_table():
     try:
         df = pd.read_sql_table(clean_name, engine)
         csv = df.to_csv(index=False)
+        
+        # Cleanup
+        del df
+        gc.collect()
+        
         return Response(csv, mimetype="text/csv", headers={"Content-disposition": f"attachment; filename={clean_name}_cleaned.csv"})
     except Exception as e:
         return str(e), 500
 
-# --- Standard Routes ---
-@app.get("/")
-def home(): return render_template('index.html')
-
-@app.get('/data_cleaning_vis_tool')
-def data_cleaning_vis_tool(): return render_template('data_cleaning_vis_tool.html')
-
-@app.route('/tool')
-def tool(): return render_template('data_cleaning_vis_tool.html')
-
-# --- Static Files ---
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-@app.route('/detectors/<path:filename>')
-def serve_detectors(filename): return send_from_directory(os.path.join(BASE_DIR, 'detectors'), filename)
-@app.route('/wranglers/<path:filename>')
-def serve_wranglers(filename): return send_from_directory(os.path.join(BASE_DIR, 'wranglers'), filename)
-@app.route('/provided_datasets/<path:filename>')
-def serve_datasets(filename): return send_from_directory(os.path.join(BASE_DIR, 'provided_datasets'), filename)
-@app.route('/<filename>.json')
-def serve_root_json(filename): return send_from_directory(BASE_DIR, f"{filename}.json")
-
 @app.route('/api/admin/download_script')
 def download_script_file():
-    """管理员：下载用于加载数据的 Python 脚本"""
+    """Admin: Download a helper Python script to load the CSV"""
     filename = request.args.get('filename')
     if not filename: return "Filename required", 400
     
     clean_name = clean_table_name(filename)
     csv_filename = f"{clean_name}_cleaned.csv"
     
-    # 自动生成的 Python 脚本内容
     script_content = f'''"""
 Buckaroo Data Cleaning Export
 Dataset: {filename}
@@ -283,3 +299,24 @@ if __name__ == "__main__":
         mimetype="text/x-python",
         headers={"Content-disposition": f"attachment; filename=load_{clean_name}.py"}
     )
+
+# --- Standard Routes ---
+@app.get("/")
+def home(): return render_template('index.html')
+
+@app.get('/data_cleaning_vis_tool')
+def data_cleaning_vis_tool(): return render_template('data_cleaning_vis_tool.html')
+
+@app.route('/tool')
+def tool(): return render_template('data_cleaning_vis_tool.html')
+
+# --- Static Files ---
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+@app.route('/detectors/<path:filename>')
+def serve_detectors(filename): return send_from_directory(os.path.join(BASE_DIR, 'detectors'), filename)
+@app.route('/wranglers/<path:filename>')
+def serve_wranglers(filename): return send_from_directory(os.path.join(BASE_DIR, 'wranglers'), filename)
+@app.route('/provided_datasets/<path:filename>')
+def serve_datasets(filename): return send_from_directory(os.path.join(BASE_DIR, 'provided_datasets'), filename)
+@app.route('/<filename>.json')
+def serve_root_json(filename): return send_from_directory(BASE_DIR, f"{filename}.json")
