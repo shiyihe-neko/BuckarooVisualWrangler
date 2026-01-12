@@ -22,7 +22,7 @@ def create_database_if_not_exists(conn, db_name):
         cur.execute(f"CREATE DATABASE {db_name}")
     cur.close()
 
-# Function to load database connection information from a JSON file or prompt the user
+# Function to load database connection information
 def load_database_info():
     basepath = os.path.dirname(os.path.abspath(__file__))
     json_path = os.path.join(basepath, "database.json")
@@ -52,35 +52,47 @@ def load_database_info():
 load_dotenv()
 app = Flask(__name__)
 
-# --- DATABASE SETUP (Fixed) ---
+# --- DATABASE SETUP ---
 
 render_db_url = os.environ.get('DATABASE_URL')
-connection = None # Initialize variable
+connection = None 
+
+# 增加连接池配置，防止 SSL 断连
+engine_args = {
+    "pool_size": 10,
+    "pool_recycle": 300,
+    "pool_pre_ping": True,  # 关键：每次连接前检查是否存活
+    "connect_args": {
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 5
+    }
+}
 
 if render_db_url:
     # === Production Environment (Render) ===
     print("Using Render Database URL...")
     
-    # Fix for SQLAlchemy compatibility (postgres:// -> postgresql://)
     if render_db_url.startswith("postgres://"):
         sqlalchemy_url = render_db_url.replace("postgres://", "postgresql://", 1)
     else:
         sqlalchemy_url = render_db_url
         
-    # 1. Create SQLAlchemy Engine
-    engine = create_engine(sqlalchemy_url)
+    # 1. Create SQLAlchemy Engine with Robust Settings
+    engine = create_engine(sqlalchemy_url, **engine_args)
     
-    # 2. Create Raw Connection (CRITICAL: routes.py needs this)
-    # We use the original URL for psycopg2
-    connection = psycopg2.connect(render_db_url)
+    # 2. Create Raw Connection
+    try:
+        connection = psycopg2.connect(render_db_url, sslmode='require') # 强制 SSL
+    except Exception as e:
+        print(f"Initial raw connection failed (will retry in routes): {e}")
 
 else:
     # === Local Environment ===
     print("Using Local Database Configuration...")
     host, port, user, password, db_name = load_database_info()
 
-    # 1. Connect to server to check/create DB
-    # Note: We connect to the server (default DB) first
     try:
         temp_conn = psycopg2.connect(host=host, port=port, user=user, password=password)
         create_database_if_not_exists(temp_conn, db_name)
@@ -88,11 +100,7 @@ else:
     except Exception as e:
         print(f"Warning: Could not check database existence: {e}")
 
-    # 2. Create Raw Connection (The global one used by routes)
-    # Connect specifically to the database now
     connection = psycopg2.connect(host=host, port=port, user=user, password=password, dbname=db_name)
-
-    # 3. Create SQLAlchemy Engine
     engine = create_engine(f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{db_name}")
 
 
@@ -106,8 +114,6 @@ try:
 except Exception as e:
     print(f"Warning: DB functions init failed: {e}")
 
-# Import Routes (Must be at the end to avoid circular import issues, 
-# but AFTER 'connection' and 'engine' are defined)
 from app import routes
 from app import wrangler_routes_sql as wrangler_routes
 from app import plot_routes
