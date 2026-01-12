@@ -4,7 +4,8 @@
 
 import numpy as np
 import pandas as pd
-from flask import request, render_template
+from flask import request, render_template, send_from_directory
+import os
 import time
 from app import app
 from app import connection, engine
@@ -101,3 +102,38 @@ def home():
 @app.get('/data_cleaning_vis_tool')
 def data_cleaning_vis_tool():
     return render_template('data_cleaning_vis_tool.html')
+
+# --- DEPLOYMENT HELPER ROUTES (For Render) ---
+# 这段代码让 Flask 可以访问根目录下的 detectors, wranglers 等文件夹
+
+# 获取项目根目录 (app 文件夹的上一级)
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
+# 1. 允许访问根目录的 HTML 页面 (Render 首页)
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/tool')
+def tool():
+    return render_template('data_cleaning_vis_tool.html')
+
+# 2. 允许访问 detectors 文件夹
+@app.route('/detectors/<path:filename>')
+def serve_detectors(filename):
+    return send_from_directory(os.path.join(BASE_DIR, 'detectors'), filename)
+
+# 3. 允许访问 wranglers 文件夹
+@app.route('/wranglers/<path:filename>')
+def serve_wranglers(filename):
+    return send_from_directory(os.path.join(BASE_DIR, 'wranglers'), filename)
+
+# 4. 允许访问 provided_datasets 文件夹
+@app.route('/provided_datasets/<path:filename>')
+def serve_datasets(filename):
+    return send_from_directory(os.path.join(BASE_DIR, 'provided_datasets'), filename)
+
+# 5. 允许访问根目录下的 json 文件 (detectors.json, wranglers.json)
+@app.route('/<filename>.json')
+def serve_root_json(filename):
+    return send_from_directory(BASE_DIR, f"{filename}.json")
