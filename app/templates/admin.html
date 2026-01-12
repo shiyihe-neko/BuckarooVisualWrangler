@@ -1,59 +1,102 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>Buckaroo Admin</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>body { padding: 30px; }</style>
+    <style>
+        body { padding: 30px; background-color: #f4f6f9; }
+        .card { border: none; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border-radius: 10px; }
+        .card-header { font-weight: bold; border-radius: 10px 10px 0 0 !important; }
+        .btn-group-vertical { width: 100%; }
+        .btn { margin-bottom: 5px; text-align: left; }
+    </style>
 </head>
 <body>
     <div class="container">
-        <h1>🤠 Admin Console</h1>
-        <hr>
+        <h1 class="mb-4">🤠 Experiment Management Console</h1>
+        
+        <div class="alert alert-warning">
+            <strong>prompt:</strong> 
+            download the dataset and the corresponding data cleaning script to run experiments locally.
+            Please place the downloaded <b>CSV file</b> and <b>.py script</b> in the same folder for the script to run.
+        </div>
         
         <div class="row">
             <div class="col-md-4">
-                <div class="card p-3">
-                    <h3>>StackOverflow Survey</h3>
-                    <p class="text-muted">Filename: stackoverflow_db_uncleaned.csv</p> 
-                    <button class="btn btn-success mb-2" onclick="download('stackoverflow_db_uncleaned.csv')">⬇️ Download</button>
-                    <button class="btn btn-danger" onclick="reset('stackoverflow_db_uncleaned.csv')">⚠️ Reset</button>
+                <div class="card">
+                    <div class="card-header bg-dark text-white">>StackOverflow Survey</div>
+                    <div class="card-body">
+                        <p class="text-muted small">File: stackoverflow_db_uncleaned.csv</p>
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-success" onclick="downloadCSV('stackoverflow_db_uncleaned.csv')">download data (.csv)</button>
+                            <button class="btn btn-primary" onclick="downloadScript('stackoverflow_db_uncleaned.csv')">download script (.py)</button>
+                            <hr>
+                            <button class="btn btn-danger" onclick="reset('stackoverflow_db_uncleaned.csv')">reset experiment</button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
 
             <div class="col-md-4">
-                <div class="card p-3">
-                    <h3>Cars</h3>
-                    <p class="text-muted">Filename: cars.csv</p>
-                    <button class="btn btn-success mb-2" onclick="download('cars.csv')">⬇️ Download</button>
-                    <button class="btn btn-danger" onclick="reset('cars.csv')">⚠️ Reset</button>
+                <div class="card">
+                    <div class="card-header bg-primary text-white">Games</div>
+                    <div class="card-body">
+                        <p class="text-muted small">File: games.csv</p>
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-success" onclick="downloadCSV('games.csv')">download data (.csv)</button>
+                            <button class="btn btn-primary" onclick="downloadScript('games.csv')">download script (.py)</button>
+                            <hr>
+                            <button class="btn btn-danger" onclick="reset('games.csv')">reset experiment</button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <!-- 卡片 3: Complaints -->
             <div class="col-md-4">
-                <div class="card p-3">
-                    <h3>Games</h3>
-                    <p class="text-muted">Filename: games.csv</p>
-                    <button class="btn btn-success mb-2" onclick="download('games.csv')">⬇️ Download</button>
-                    <button class="btn btn-danger" onclick="reset('games.csv')">⚠️ Reset</button>
+                <div class="card">
+                    <div class="card-header bg-warning text-dark">Cars</div>
+                    <div class="card-body">
+                        <p class="text-muted small">File: cars.csv</p>
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-success" onclick="downloadCSV('cars.csv')">download data (.csv)</button>
+                            <button class="btn btn-primary" onclick="downloadScript('cars.csv')">download script (.py)</button>
+                            <hr>
+                            <button class="btn btn-danger" onclick="reset('cars.csv')">reset experiment</button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
     <script>
-        function download(filename) {
+        function downloadCSV(filename) {
             window.location.href = `/api/admin/download_table?table=${filename}`;
         }
+        
+        function downloadScript(filename) {
+            window.location.href = `/api/admin/download_script?filename=${filename}`;
+        }
+
         async function reset(filename) {
-            if(!confirm(`Are you sure you want to reset ${filename}?\nAll current modifications will be lost!`)) return;
+            if(!confirm(`are you sure you want to reset ${filename}?\nAll current changes will be lost!`)) return;
             try {
+                // Simple loading animation
+                const btns = document.querySelectorAll('button');
+                btns.forEach(b => b.disabled = true);
+                
                 let res = await fetch(`/api/admin/reset_dataset?filename=${filename}`);
                 let data = await res.json();
+                
+                btns.forEach(b => b.disabled = false);
                 alert(data.success ? "✅ Reset successful!" : "❌ Failed: " + data.error);
-            } catch(e) { alert("Network error"); }
+            } catch(e) { 
+                alert("Network error"); 
+                document.querySelectorAll('button').forEach(b => b.disabled = false);
+            }
         }
     </script>
 </body>

@@ -218,3 +218,68 @@ def serve_wranglers(filename): return send_from_directory(os.path.join(BASE_DIR,
 def serve_datasets(filename): return send_from_directory(os.path.join(BASE_DIR, 'provided_datasets'), filename)
 @app.route('/<filename>.json')
 def serve_root_json(filename): return send_from_directory(BASE_DIR, f"{filename}.json")
+
+@app.route('/api/admin/download_script')
+def download_script_file():
+    """管理员：下载用于加载数据的 Python 脚本"""
+    filename = request.args.get('filename')
+    if not filename: return "Filename required", 400
+    
+    clean_name = clean_table_name(filename)
+    csv_filename = f"{clean_name}_cleaned.csv"
+    
+    # 自动生成的 Python 脚本内容
+    script_content = f'''"""
+Buckaroo Data Cleaning Export
+Dataset: {filename}
+Date: {time.strftime("%Y-%m-%d %H:%M:%S")}
+
+Instructions:
+1. Ensure the file "{csv_filename}" is in the same folder as this script.
+2. Run this script to load the cleaned data.
+"""
+
+import pandas as pd
+import os
+
+def load_cleaned_data():
+    csv_file = "{csv_filename}"
+    
+    if not os.path.exists(csv_file):
+        print(f"Error: Could not find {{csv_file}}")
+        print("Please download the CSV from the Admin Console and place it here.")
+        return None
+        
+    print(f"Loading {{csv_file}}...")
+    try:
+        # Load the dataset
+        df = pd.read_csv(csv_file)
+        
+        # Display info
+        print("-" * 30)
+        print(f"Successfully loaded {{len(df)}} rows.")
+        print("-" * 30)
+        print("Data Columns:")
+        print(df.columns.tolist())
+        print("-" * 30)
+        
+        return df
+    except Exception as e:
+        print(f"Error loading data: {{e}}")
+        return None
+
+if __name__ == "__main__":
+    # Load the dataframe
+    df = load_cleaned_data()
+    
+    if df is not None:
+        # You can start your analysis here
+        print("Dataframe is ready for analysis!")
+        print(df.head())
+'''
+    
+    return Response(
+        script_content,
+        mimetype="text/x-python",
+        headers={"Content-disposition": f"attachment; filename=load_{clean_name}.py"}
+    )
