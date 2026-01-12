@@ -13,27 +13,21 @@ from app.set_id_column import set_id_column
 import json
 from sqlalchemy import inspect, text
 
-# --- IMPORT ACTION HISTORY FROM WRANGLER ---
-# This allows routes.py to access the logs recorded in wrangler_routes_sql.py
-from app.wrangler_routes_sql import ACTION_HISTORY
+# IMPORT ACTION HISTORIES
+from app.wrangler_routes_sql import ACTION_HISTORIES, get_table_history
 
 # --- CORE OPTIMIZATION: Safe Chunked Write ---
 def safe_write_to_db_with_sleep(df, table_name, engine, chunk_size=2000):
-    """
-    Writes DataFrame to DB in chunks with sleep to prevent SSL errors.
-    """
     total_rows = len(df)
     print(f"[START] Safe write for {table_name}: {total_rows} rows...")
     
     try:
-        # First chunk (Replace mode)
         first_chunk = df.iloc[0:chunk_size]
         use_index = "rankings" not in table_name
         first_chunk.to_sql(table_name, engine, if_exists='replace', index=use_index)
         print(f"   [WRITE] Initialized table with first {len(first_chunk)} rows...")
         time.sleep(1) 
         
-        # Remaining chunks (Append mode)
         for i in range(chunk_size, total_rows, chunk_size):
             chunk = df.iloc[i : i + chunk_size]
             chunk.to_sql(table_name, engine, if_exists='append', index=use_index)
@@ -45,7 +39,7 @@ def safe_write_to_db_with_sleep(df, table_name, engine, chunk_size=2000):
         raise e 
     print(f"[SUCCESS] Finished writing {table_name}!")
 
-# --- Auto-Load Logic with GC ---
+# --- Auto-Load Logic ---
 def initialize_dataset_if_needed(cleaned_table_name, original_filename):
     inspector = inspect(engine)
     has_main = inspector.has_table(cleaned_table_name)
@@ -54,7 +48,6 @@ def initialize_dataset_if_needed(cleaned_table_name, original_filename):
     if not has_main or not has_error:
         print(f"[WARN] Data mismatch for {cleaned_table_name}. Starting clean reload...")
         
-        # Cleanup old tables first
         try:
             with engine.connect() as conn:
                 trans = conn.begin()
@@ -81,29 +74,25 @@ def initialize_dataset_if_needed(cleaned_table_name, original_filename):
                 df_with_id = set_id_column(df)
                 detected_data = run_detectors(df)
                 
-                # GC 1: Clean raw df
                 del df
                 gc.collect()
                 
-                # Write Main Data
                 safe_write_to_db_with_sleep(df_with_id, cleaned_table_name, engine)
-                
-                # GC 2: Clean ID df
                 del df_with_id
                 gc.collect()
                 
-                # Write Errors
                 safe_write_to_db_with_sleep(detected_data, "errors" + cleaned_table_name, engine)
                 
-                # Rankings
                 from app.service_helpers import calculate_attribute_rankings
                 rankings = calculate_attribute_rankings(detected_data)
                 rankings.to_sql("rankings" + cleaned_table_name, engine, if_exists='replace', index=False)
                 
-                # GC 3: Final cleanup
                 del detected_data
                 del rankings
                 gc.collect()
+                
+                # Initialize history
+                get_table_history(cleaned_table_name)
                 
                 print(f"[DONE] Successfully loaded {cleaned_table_name}")
             except Exception as e:
@@ -130,7 +119,6 @@ def upload_csv():
         if not os.path.exists("report"): os.makedirs("report")
         json.dump({'db': cleaned_table_name, "clean_time": time_to_detect, "dataframe_shape": list(detected_data.shape)}, open(f"report/{cleaned_table_name}.json", "w"))
 
-        # GC Cleanup for Upload
         del dataframe
         gc.collect()
 
@@ -147,6 +135,8 @@ def upload_csv():
         del detected_data
         del rankings
         gc.collect()
+        
+        get_table_history(cleaned_table_name)
 
         return{"success": True, "rows for undetected data": "inserted", "clean_table_name": cleaned_table_name}
     except Exception as e:
@@ -209,11 +199,9 @@ def reset_dataset():
                 conn.execute(text(f'DROP TABLE IF EXISTS "{table}" CASCADE;'))
             trans.commit()
         
-        # Reset Action History when dataset is reset
-        ACTION_HISTORY.clear()
-        ACTION_HISTORY.append("# Buckaroo Auto-Generated Action Script")
-        ACTION_HISTORY.append("import pandas as pd")
-        ACTION_HISTORY.append("# Log cleared after reset")
+        # Reset Action History
+        if cleaned_name in ACTION_HISTORIES:
+            del ACTION_HISTORIES[cleaned_name]
         
         gc.collect()
         return {"success": True, "message": f"Dataset {cleaned_name} reset."}
@@ -238,13 +226,23 @@ def download_table():
 def download_actions():
     """
     Admin: Download the recorded action history as a Python script.
-    Collects logs from wrangler_routes_sql.py
     """
-    script_content = "\n".join(ACTION_HISTORY)
+    filename = request.args.get('filename')
+    if not filename: return "Filename required", 400
+    
+    clean_name = clean_table_name(filename)
+    
+    # Retrieve history
+    if clean_name in ACTION_HISTORIES:
+        script_content = "\n".join(ACTION_HISTORIES[clean_name])
+    else:
+        # Initial template if not found
+        script_content = f"# No actions recorded yet for {filename}\n# Please perform some operations first."
+
     return Response(
         script_content,
         mimetype="text/x-python",
-        headers={"Content-disposition": "attachment; filename=user_actions.py"}
+        headers={"Content-disposition": f"attachment; filename={clean_name}_actions.py"}
     )
 
 @app.route('/api/admin/download_script')
@@ -256,7 +254,6 @@ def download_script_file():
     clean_name = clean_table_name(filename)
     csv_filename = f"{clean_name}_cleaned.csv"
     
-    # Restoring the detailed script template
     script_content = f'''"""
 Buckaroo Data Cleaning Export
 Dataset: {filename}
@@ -290,9 +287,6 @@ def load_cleaned_data():
         print(f"Successfully loaded {{len(df)}} rows.")
         print(f"Columns: {{len(df.columns)}}")
         print("-" * 30)
-        print("Data Columns:")
-        print(df.columns.tolist())
-        print("-" * 30)
         
         return df
     except Exception as e:
@@ -310,7 +304,6 @@ if __name__ == "__main__":
     else:
         input("Press Enter to exit...")
 '''
-    
     return Response(
         script_content,
         mimetype="text/x-python",
