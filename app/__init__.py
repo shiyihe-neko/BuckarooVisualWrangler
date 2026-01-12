@@ -11,24 +11,16 @@ import json
 
 from data_management.data_state import DataState
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-# from data_management.data_integration import *
-
 
 # Function to create the database if it does not exist
-# This function checks if the database exists and creates it if it does not
 def create_database_if_not_exists(conn, db_name):
     conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
     cur = conn.cursor()
-
-    # Check if the database exists
     cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (db_name,))
     exists = cur.fetchone()
-
     if not exists:
         cur.execute(f"CREATE DATABASE {db_name}")
-
     cur.close()
-
 
 # Function to load database connection information from a JSON file or prompt the user
 def load_database_info():
@@ -38,83 +30,84 @@ def load_database_info():
     if os.path.exists(json_path):
         with open(json_path, "r") as f:
             db_info = json.loads(f.read())
-            host = db_info["host"]
-            port = db_info["port"]
-            user = db_info["user"]
-            password = db_info["password"]
-            db_name = db_info["db_name"]
-            return host, port, user, password, db_name
+            return db_info["host"], db_info["port"], db_info["user"], db_info["password"], db_info["db_name"]
     else:
+        # Local fallback only
         print("database.json file not found, using default connection parameters.")
-        print("Enter the host of the database (default: localhost): ")
-        host = input() or "localhost"
-        print("Enter the port of the database (default: 5432): ")
-        port = input() or 5432
-        print("Enter the user of the database (default: postgres): ")
-        user = input() or "postgres"
-        print("Enter the password of the database: ")
-        password = input()
-        print("Enter the name of the database (default: buckaroo_db): ")
-        db_name = input() or "buckaroo_db"
+        host = input("Enter host (default: localhost): ") or "localhost"
+        port = input("Enter port (default: 5432): ") or 5432
+        user = input("Enter user (default: postgres): ") or "postgres"
+        password = input("Enter password: ")
+        db_name = input("Enter db_name (default: buckaroo_db): ") or "buckaroo_db"
+        
         with open(json_path, "w") as f:
-            db_info = {
-                "host": host,
-                "port": port,
-                "user": user,
-                "password": password,
-                "db_name": db_name
-            }
-            f.write(json.dumps(db_info, indent=4))    
+            json.dump({
+                "host": host, "port": port, "user": user, 
+                "password": password, "db_name": db_name
+            }, f, indent=4)    
 
     return host, port, user, password, db_name
 
 
-# load the .env file and read the different variables in there and them in the environment variables for this process
 load_dotenv()
-
 app = Flask(__name__)
 
-# Check for Render's DATABASE_URL environment variable
+# --- DATABASE SETUP (Fixed) ---
+
 render_db_url = os.environ.get('DATABASE_URL')
+connection = None # Initialize variable
 
 if render_db_url:
-    # --- Production Environment (Render) ---
+    # === Production Environment (Render) ===
     print("Using Render Database URL...")
     
-    # Fix for SQLAlchemy compatibility (Render provides postgres:// but SQLAlchemy requires postgresql://)
+    # Fix for SQLAlchemy compatibility (postgres:// -> postgresql://)
     if render_db_url.startswith("postgres://"):
-        render_db_url = render_db_url.replace("postgres://", "postgresql://", 1)
+        sqlalchemy_url = render_db_url.replace("postgres://", "postgresql://", 1)
+    else:
+        sqlalchemy_url = render_db_url
         
-    # Create engine directly using the provided URL
-    engine = create_engine(render_db_url)
+    # 1. Create SQLAlchemy Engine
+    engine = create_engine(sqlalchemy_url)
+    
+    # 2. Create Raw Connection (CRITICAL: routes.py needs this)
+    # We use the original URL for psycopg2
+    connection = psycopg2.connect(render_db_url)
 
 else:
-    # --- Local Environment ---
+    # === Local Environment ===
     print("Using Local Database Configuration...")
     host, port, user, password, db_name = load_database_info()
 
-    # Connect to postgres default DB to check/create the target database
+    # 1. Connect to server to check/create DB
+    # Note: We connect to the server (default DB) first
     try:
-        connection = psycopg2.connect(host=host, port=port, user=user, password=password)
-        create_database_if_not_exists(connection, db_name)
-        connection.close() 
+        temp_conn = psycopg2.connect(host=host, port=port, user=user, password=password)
+        create_database_if_not_exists(temp_conn, db_name)
+        temp_conn.close()
     except Exception as e:
-        print(f"Warning: Could not check/create database: {e}")
+        print(f"Warning: Could not check database existence: {e}")
 
-    # engine to use pandas with the db
+    # 2. Create Raw Connection (The global one used by routes)
+    # Connect specifically to the database now
+    connection = psycopg2.connect(host=host, port=port, user=user, password=password, dbname=db_name)
+
+    # 3. Create SQLAlchemy Engine
     engine = create_engine(f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{db_name}")
 
 
-# manages the different data instances of the data during the users session
+# Initialize Data State
 data_state_manager = DataState()
 
-# Initialize PostgreSQL stored procedures for histogram generation with errors
+# Initialize DB Functions
 from app.db_functions import initialize_database_functions
 try:
     initialize_database_functions(engine)
 except Exception as e:
-    print(f"Warning: Could not initialize DB functions (Tables might not exist yet): {e}")
+    print(f"Warning: DB functions init failed: {e}")
 
+# Import Routes (Must be at the end to avoid circular import issues, 
+# but AFTER 'connection' and 'engine' are defined)
 from app import routes
 from app import wrangler_routes_sql as wrangler_routes
 from app import plot_routes
