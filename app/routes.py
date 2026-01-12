@@ -1,6 +1,5 @@
-#Buckaroo Project - June 1, 2025
-#This file handles all endpoints from the front-end
-
+# Buckaroo Project - June 1, 2025
+# This file handles all endpoints from the front-end
 
 import numpy as np
 import pandas as pd
@@ -14,6 +13,52 @@ from app.service_helpers import clean_table_name, get_whole_table_query, run_det
 from app import data_state_manager
 from app.set_id_column import set_id_column
 import json
+from sqlalchemy import inspect
+
+# --- Helper to Auto-Load Provided Datasets ---
+def initialize_dataset_if_needed(cleaned_table_name, original_filename):
+    """
+    Checks if the table exists in DB. If not, loads it from provided_datasets csv.
+    """
+    inspector = inspect(engine)
+    if not inspector.has_table(cleaned_table_name):
+        print(f"Table {cleaned_table_name} not found. Auto-loading from CSV...")
+        
+        # Construct path to the CSV file
+        # It lives in app/static/provided_datasets/ OR just provided_datasets/ depending on structure
+        # Based on your structure: provided_datasets/ is in root
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        csv_path = os.path.join(base_dir, 'provided_datasets', original_filename)
+        
+        if not os.path.exists(csv_path):
+             # Try static folder just in case
+             csv_path = os.path.join(base_dir, 'app', 'static', 'provided_datasets', original_filename)
+             
+        if os.path.exists(csv_path):
+            try:
+                # Load CSV
+                df = pd.read_csv(csv_path)
+                
+                # Process Data
+                df_with_id = set_id_column(df)
+                detected_data = run_detectors(df)
+                
+                # Write to DB
+                df_with_id.to_sql(cleaned_table_name, engine, if_exists='replace')
+                detected_data.to_sql("errors" + cleaned_table_name, engine, if_exists='replace')
+                
+                # Rankings
+                rankings = calculate_attribute_rankings(detected_data)
+                rankings.to_sql("rankings" + cleaned_table_name, engine, if_exists='replace', index=False)
+                
+                print(f"Successfully loaded {cleaned_table_name}")
+            except Exception as e:
+                print(f"Failed to auto-load dataset: {e}")
+        else:
+            print(f"CSV file not found at: {csv_path}")
+
+# ----------------------------------------------
+
 
 @app.post("/api/upload")
 def upload_csv():
@@ -34,6 +79,11 @@ def upload_csv():
     time_to_detect = time.time() - start_time
 
     cleaned_table_name = clean_table_name(csv_file.filename)
+    
+    # Ensure report directory exists for Render
+    if not os.path.exists("report"):
+        os.makedirs("report")
+        
     json.dump({'db': cleaned_table_name, "clean_time": time_to_detect, "dataframe_shape": list(detected_data.shape)}, open(f"report/{cleaned_table_name}.json", "w"))
 
     try:
@@ -64,6 +114,12 @@ def get_sample():
 
     if not filename:
         return {"success": False, "error": "Filename required"}
+    
+    # --- AUTO-LOAD LOGIC ---
+    # If the user is requesting one of the provided datasets, ensure it's loaded in DB
+    initialize_dataset_if_needed(cleaned_table_name, filename)
+    # -----------------------
+
     QUERY = get_whole_table_query(cleaned_table_name,False) + " LIMIT "+ data_size
     try:
         fetch_detected_and_undetected_current_dataset_from_db(cleaned_table_name,engine)
@@ -72,6 +128,7 @@ def get_sample():
         # print("First row:", sample_dataframe_as_dictionary[0])  # See what keys exist
         return sample_dataframe_as_dictionary
     except Exception as e:
+        print(f"Error fetching sample: {e}")
         return {"success": False, "error": str(e)}
 
 
@@ -87,6 +144,11 @@ def get_errors():
     cleaned_table_name = clean_table_name(filename)
     if not filename:
         return {"success": False, "error": "Filename required"}
+    
+    # --- AUTO-LOAD LOGIC ---
+    initialize_dataset_if_needed(cleaned_table_name, filename)
+    # -----------------------
+
     query = get_whole_table_query(cleaned_table_name,True)
     try:
         full_error_df = pd.read_sql_query(query, engine)
@@ -108,11 +170,6 @@ def data_cleaning_vis_tool():
 
 # 获取项目根目录 (app 文件夹的上一级)
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-
-# 1. 允许访问根目录的 HTML 页面 (Render 首页)
-@app.route('/')
-def index():
-    return render_template('index.html')
 
 @app.route('/tool')
 def tool():
