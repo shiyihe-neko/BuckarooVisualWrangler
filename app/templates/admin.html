@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -11,60 +10,75 @@
         .card-header { font-weight: bold; border-radius: 10px 10px 0 0 !important; }
         .btn-group-vertical { width: 100%; }
         .btn { margin-bottom: 5px; text-align: left; }
+        .main-actions { margin-bottom: 30px; padding: 20px; background: white; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1 class="mb-4">🤠 Experiment Management Console</h1>
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1>🤠 Experiment Management Console</h1>
+            <span class="badge bg-secondary">Admin Mode</span>
+        </div>
         
+        <!-- Global Actions Area -->
+        <div class="main-actions text-center">
+            <h4>📝 Session Recorder</h4>
+            <p class="text-muted">Download the Python script containing the exact cleaning steps performed by the user.</p>
+            <button class="btn btn-dark btn-lg" onclick="downloadActionHistory()">
+                📜 Download User Operations Script (.py)
+            </button>
+        </div>
+
         <div class="alert alert-warning">
-            <strong>prompt:</strong> 
-            download the dataset and the corresponding data cleaning script to run experiments locally.
+            <strong>Prompt:</strong> 
+            Download the dataset and the corresponding data cleaning script to run experiments locally.
             Please place the downloaded <b>CSV file</b> and <b>.py script</b> in the same folder for the script to run.
         </div>
         
         <div class="row">
+            <!-- StackOverflow -->
             <div class="col-md-4">
                 <div class="card">
-                    <div class="card-header bg-dark text-white">>StackOverflow Survey</div>
+                    <div class="card-header bg-dark text-white">StackOverflow Survey</div>
                     <div class="card-body">
                         <p class="text-muted small">File: stackoverflow_db_uncleaned.csv</p>
                         <div class="d-grid gap-2">
-                            <button class="btn btn-success" onclick="downloadCSV('stackoverflow_db_uncleaned.csv')">download data (.csv)</button>
-                            <button class="btn btn-primary" onclick="downloadScript('stackoverflow_db_uncleaned.csv')">download script (.py)</button>
+                            <button class="btn btn-success" onclick="downloadCSV('stackoverflow_db_uncleaned.csv')">📊 1. Download Data (.csv)</button>
+                            <button class="btn btn-primary" onclick="downloadScript('stackoverflow_db_uncleaned.csv')">🐍 2. Download Loader (.py)</button>
                             <hr>
-                            <button class="btn btn-danger" onclick="reset('stackoverflow_db_uncleaned.csv')">reset experiment</button>
+                            <button class="btn btn-danger" onclick="reset('stackoverflow_db_uncleaned.csv')">⚠️ Reset Experiment</button>
                         </div>
                     </div>
                 </div>
             </div>
 
-
+            <!-- Games -->
             <div class="col-md-4">
                 <div class="card">
                     <div class="card-header bg-primary text-white">Games</div>
                     <div class="card-body">
                         <p class="text-muted small">File: games.csv</p>
                         <div class="d-grid gap-2">
-                            <button class="btn btn-success" onclick="downloadCSV('games.csv')">download data (.csv)</button>
-                            <button class="btn btn-primary" onclick="downloadScript('games.csv')">download script (.py)</button>
+                            <button class="btn btn-success" onclick="downloadCSV('games.csv')">📊 1. Download Data (.csv)</button>
+                            <button class="btn btn-primary" onclick="downloadScript('games.csv')">🐍 2. Download Loader (.py)</button>
                             <hr>
-                            <button class="btn btn-danger" onclick="reset('games.csv')">reset experiment</button>
+                            <button class="btn btn-danger" onclick="reset('games.csv')">⚠️ Reset Experiment</button>
                         </div>
                     </div>
                 </div>
             </div>
 
+            <!-- Cars -->
             <div class="col-md-4">
                 <div class="card">
                     <div class="card-header bg-warning text-dark">Cars</div>
                     <div class="card-body">
                         <p class="text-muted small">File: cars.csv</p>
                         <div class="d-grid gap-2">
-                            <button class="btn btn-success" onclick="downloadCSV('cars.csv')">download data (.csv)</button>
-                            <button class="btn btn-primary" onclick="downloadScript('cars.csv')">download script (.py)</button>
+                            <button class="btn btn-success" onclick="downloadCSV('cars.csv')">📊 1. Download Data (.csv)</button>
+                            <button class="btn btn-primary" onclick="downloadScript('cars.csv')">🐍 2. Download Loader (.py)</button>
                             <hr>
-                            <button class="btn btn-danger" onclick="reset('cars.csv')">reset experiment</button>
+                            <button class="btn btn-danger" onclick="reset('cars.csv')">⚠️ Reset Experiment</button>
                         </div>
                     </div>
                 </div>
@@ -81,8 +95,12 @@
             window.location.href = `/api/admin/download_script?filename=${filename}`;
         }
 
+        function downloadActionHistory() {
+            window.location.href = `/api/admin/download_actions`;
+        }
+
         async function reset(filename) {
-            if(!confirm(`are you sure you want to reset ${filename}?\nAll current changes will be lost!`)) return;
+            if(!confirm(`Are you sure you want to reset ${filename}?\nAll current changes and logs will be lost!`)) return;
             try {
                 // Simple loading animation
                 const btns = document.querySelectorAll('button');
@@ -92,7 +110,7 @@
                 let data = await res.json();
                 
                 btns.forEach(b => b.disabled = false);
-                alert(data.success ? "✅ Reset successful!" : "❌ Failed: " + data.error);
+                alert(data.success ? "✅ Reset successful! (Action Log Cleared)" : "❌ Failed: " + data.error);
             } catch(e) { 
                 alert("Network error"); 
                 document.querySelectorAll('button').forEach(b => b.disabled = false);
